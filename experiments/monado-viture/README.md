@@ -86,6 +86,23 @@ so a redirected/closed stdin makes it die with `epoll_ctl(stdin) failed`.
 `scripts/run-service` handles both cases: it refuses to start a second instance,
 removes a socket no live process owns, and warns when stdin is not a terminal.
 
+### Watch for a display-metadata flap after GPU work
+
+After a Vulkan/DRM-touching run this host has twice reported odd X connector
+metadata: `DP-0 disconnected ... 0mm x 0mm`, and once a transient
+`3440/910x1440/381` where the EDID says `797x333`. The kernel disagreed
+(`card1-DP-1 connected`, 256-byte EDID present), and the mode, refresh, layout,
+primary flag and effective 110x110 dpi were all unaffected -- only X's per-output
+metadata was stale. Cause not established; the correlation is with the
+compositor/Vulkan work these milestones require, so expect it again at M2.
+
+Recovery if something reads that metadata:
+
+```sh
+DISPLAY=:1 xrandr --output DP-0 --auto     # re-probe the connector
+scripts/restore-display known-good         # last resort: ultrawide only
+```
+
 A build against the default settings produces an *out-of-process* runtime
 (`libopenxr_monado.so` talks to `monado-service` over that socket), so the
 service must already be running before launching an OpenXR application.
