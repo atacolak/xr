@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(camera_bridge)
+
+if(NOT VITURE_INCLUDE_DIR)
+    message(FATAL_ERROR "VITURE_INCLUDE_DIR is not set")
+endif()
+if(NOT VITURE_JNILIBS_DIR)
+    message(FATAL_ERROR "VITURE_JNILIBS_DIR is not set")
+endif()
+if(NOT EXISTS "${VITURE_JNILIBS_DIR}/libglasses.so")
+    message(FATAL_ERROR "VITURE SDK libglasses.so not found at ${VITURE_JNILIBS_DIR}")
+endif()
+
+add_library(glasses SHARED IMPORTED)
+set_target_properties(glasses PROPERTIES IMPORTED_LOCATION "${VITURE_JNILIBS_DIR}/libglasses.so")
+
+add_library(camera_bridge SHARED camera_bridge.cpp)
+target_include_directories(camera_bridge PRIVATE ${VITURE_INCLUDE_DIR})
+target_link_options(camera_bridge PRIVATE "-Wl,-z,max-page-size=16384")
+target_link_libraries(camera_bridge glasses android log)

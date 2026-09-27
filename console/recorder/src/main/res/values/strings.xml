@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">XR Recorder</string>
+    <string name="tile_label">XR REC</string>
+    <string name="channel_name">XR recording</string>
+</resources>

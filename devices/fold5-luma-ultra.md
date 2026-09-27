@@ -23,6 +23,9 @@ port you saw in one session as durable.
 - USB vendor `0x35CA`
 - Observed product IDs on this unit: `0x1104` (tracking/control, preferred)
   and `0x1102` (second VITURE interface). Luma Ultra also documents `0x1101`.
+- Front RGB camera USB on this unit: vendor `0x0C45` product `0x636B`
+  (Sonix UVC; VITURE SDK `xr_camera_provider`, MJPEG 1920×1080@30).
+  Verified via Fold `lsusb` 2026-09-27. This is not the phone camera.
 - Native SDK used during UxSpace bring-up: **libglasses 2.4.0**
   (proprietary; untracked; download from VITURE developer portal).
 

@@ -30,7 +30,14 @@ scripts/xrctl smoke com.example
 scripts/xrctl logs com.example
 scripts/xrctl screenshot
 scripts/xrctl display
+scripts/xrctl pull /sdcard/... ./local
+scripts/xrctl cursor status    # read-only pointer settings
 ```
+
+Recorder V1 (`console/recorder`, package `sh.colak.xrconsole.recorder`) uses
+the same harness. `console/recorder/smoke.sh` builds, `xrctl deploy`s, auto-
+records ≥30s, pulls a sample, and ffprobes it. Do not ask the human to
+install that APK or paste logcat.
 
 `xrctl` does not build UxSpace or any other app. Wrappers may call it.
 

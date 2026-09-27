@@ -90,3 +90,16 @@ ad-hoc SSH/ADB one-liners so transport assumptions stay in one place.
   - other observations not recoverable through instrumentation
 
 - Proprietary SDKs and private device credentials remain untracked.
+
+---
+
+## Console / recorder
+
+- `console/` is for small XR operational surfaces. Do not dump Voicecat,
+  speech-core, Herdr, or OMP into it.
+- The field recorder package `sh.colak.xrconsole.recorder` is a durable
+  identity (stable name + debug signing + `adb install -r`).
+- Load VITURE native code only when a recording starts. A failed glasses
+  path must not kill process launch.
+- V1 records Luma Ultra front RGB + microphone only. Do not add tracking
+  cameras, pose, IMU, ASR, or annotation unless the task says so.

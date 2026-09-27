@@ -36,6 +36,7 @@ Device / ADB
   adb ensure                 make Fold-local wireless ADB `device`
   adb shell <args...>        adb shell on the live serial
   adb pair <code> <port>     one-time Wireless Debugging pair (local)
+  pull <remote> <local>      stream a device file to this host (exec-out)
 
 Packages
   deploy <apk> --package <pkg>   scp + adb install -r -d -t
@@ -47,6 +48,7 @@ Packages
 Sensors / display
   screenshot [path]            phone screencap PNG
   display                      dumpsys display summary (no ephemeral IDs as config)
+  cursor status                dump pointer-related settings (read-only)
 
 Env: XRCTL_SSH_HOST XRCTL_STATE_DIR XRCTL_SETTLE_S XRCTL_ADB_WIFI_TIMEOUT_S
 EOFU
@@ -397,6 +399,43 @@ cmd_smoke() {
   [ "$status" = "PASS_STAGE_A" ]
 }
 
+cmd_pull() {
+  local remote="${1:-}" dest="${2:-}"
+  [ -n "$remote" ] && [ -n "$dest" ] || die "usage: xrctl pull <remote-path> <local-path>"
+  cmd_adb_ensure
+  mkdir -p "$(dirname "$dest")"
+  local serial
+  serial="$(pick_serial)" || die "no adb device"
+  # Binary-safe: Fold-local adb exec-out -> ssh stdout -> local file.
+  ssh "${SSH_OPTS[@]}" "$XRCTL_SSH_HOST" \
+    "$REMOTE_ENV adb -s $(printf '%q' "$serial") exec-out cat $(printf '%q' "$remote")" \
+    >"$dest"
+  if [ ! -s "$dest" ]; then
+    die "pull empty: $remote"
+  fi
+  log "pulled $remote -> $dest ($(stat -c%s "$dest") bytes)"
+}
+
+cmd_cursor_status() {
+  cmd_adb_ensure
+  echo "=== pointer-related settings (read-only) ==="
+  echo "--- secure ---"
+  dev_adb 'shell settings list secure' | grep -iE 'pointer|mouse|cursor|hover' || true
+  echo "--- system ---"
+  dev_adb 'shell settings list system' | grep -iE 'pointer|mouse|cursor|hover' || true
+  echo "--- global ---"
+  dev_adb 'shell settings list global' | grep -iE 'pointer|mouse|cursor|hover' || true
+  echo "--- accessibility large pointer (AOSP) ---"
+  dev_adb 'shell settings get secure accessibility_large_pointer_icon' || true
+  echo "--- pointer_speed (AOSP, not size) ---"
+  dev_adb 'shell settings get system pointer_speed' || true
+  echo
+  echo "Manual path on this Fold / One UI 8.5:"
+  echo "  Settings -> Accessibility -> Vision enhancements -> Pointer size and colour"
+  echo "xrctl does not mutate pointer settings until a specific key is verified reversible."
+}
+
+
 main() {
   local cmd="${1:-}"
   shift || true
@@ -424,6 +463,13 @@ main() {
     logs) cmd_logs "$@" ;;
     screenshot) cmd_screenshot "${1:-}" ;;
     display) cmd_display ;;
+    pull) cmd_pull "${1:-}" "${2:-}" ;;
+    cursor)
+      case "${1:-}" in
+        status|"") cmd_cursor_status ;;
+        *) die "usage: xrctl cursor status (sunlight not wired until a reversible setting is verified)" ;;
+      esac
+      ;;
     *) usage; die "unknown command: $cmd" ;;
   esac
 }

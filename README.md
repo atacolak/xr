@@ -25,6 +25,7 @@ their own repositories. XR refers to them; it does not absorb them.
 - `integrations/` — contracts with Voicecat, speech-core, and Herdr
 - `tools/herdr-launcher/` — tiny DeX-visible HERDR launcher APK
 - `fold-thinclient/` — existing Termux/WADB glue (preserved)
+- `console/` — small XR operational surfaces (field recorder, not a component dump)
 
 ## Next frontier
 
@@ -34,4 +35,5 @@ Do not start that installation from this consolidation task.
 ## Layout rule
 
 UxSpace, Voicecat, speech-core, Herdr, and OMP remain independent projects.
-This repository documents how XR uses them.
+This repository documents how XR uses them. `console/` is for tiny utilities
+that only exist for this glasses+Fold stack; it does not absorb those repos.
