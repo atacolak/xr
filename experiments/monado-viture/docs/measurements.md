@@ -3,6 +3,98 @@
 The scoreboard. Every entry is either `measured` with the command and the output
 next to it, or `UNVERIFIED`. Nothing in between.
 
+## Milestone status
+
+### M0 — Monado instantiates a static VITURE HMD: **MEASURED**
+
+`VITURE_NO_SDK=1 monado-service`, no glasses attached, no vendor library loaded
+(Monado's compute compositor is the default off-Android). From the service log:
+
+```
+ WARN [viture_hmd_create] VITURE_NO_SDK=1: static HMD, no tracking, no vendor SDK
+   prod = VITURE (pid 0x0000)
+   view_count = 2
+   views[0].viewport.x_pixels = 0
+   views[0].viewport.w_pixels = 1920
+   views[0].viewport.h_pixels = 1200
+   views[1].viewport.x_pixels = 1920
+   views[1].viewport.w_pixels = 1920
+   views[1].viewport.h_pixels = 1200
+ INFO [viture_hmd_create] created: VITURE (pid 0x0000), panel 3840x1200@90-sbs (3840x1200 total, 2 view(s), 90 Hz)
+   Selected viture because it was certain it could create a head
+   Using builder viture: VITURE glasses
+       0: 'VITURE (pid 0x0000)' (id=1)
+      head: VITURE (pid 0x0000) (viture-0000), view count: 2
+```
+
+The two viewports start at x=0 and x=1920, each 1920x1200: the side-by-side split
+is correct, and the declared panel timing is the 3840x1200@90 stereo mode.
+
+`monado-cli info` additionally lists the builder as registered:
+
+```
+	viture: VITURE glasses
+		viture
+```
+
+### M1 — hello_xr enumerates it and runs stereo: **MEASURED**
+
+```
+XR_RUNTIME_JSON=$MONADO/build/openxr_monado-dev.json \
+LD_LIBRARY_PATH=$HOME/workspace/openxr-sdk/build/src/loader \
+  hello_xr -g Vulkan --space Local        # stdin kept open for the frame loop
+```
+
+```
+	Head: 'VITURE (pid 0x0000)'
+System Properties: Name=Monado: VITURE (pid 0x0000) VendorId=42
+System Tracking Properties: OrientationTracking=True PositionTracking=True
+Creating swapchain for view 0 with dimensions Width=2688 Height=1680 SampleCount=1
+Creating swapchain for view 1 with dimensions Width=2688 Height=1680 SampleCount=1
+XrEventDataSessionStateChanged: ... IDLE->READY
+XrEventDataSessionStateChanged: ... READY->SYNCHRONIZED
+XrEventDataSessionStateChanged: ... SYNCHRONIZED->VISIBLE
+XrEventDataSessionStateChanged: ... VISIBLE->FOCUSED
+```
+
+Ran 15 s, exit 0, **zero errors** (the only "error" substring in the log is the
+quirk name `no_validation_error_in_create_ref_space`). `FOCUSED` is only reached
+once the application is submitting frames and the compositor is accepting them,
+so frames were rendered for both eyes.
+
+2688x1680 is 1920x1200 x 1.4, i.e. the eye panels scaled by Monado's
+`XRT_COMPOSITOR_SCALE_PERCENTAGE` default of 140.
+
+**This does not mean anything reached the glasses.** The compositor used was the
+compute (headless) one; M2 is what puts pixels on the panels.
+
+### Negative test — no fabricated head: **MEASURED**
+
+With no glasses attached and `VITURE_NO_SDK` unset:
+
+```
+      simulated: Simulated devices builder
+      viture: VITURE glasses
+   Selected legacy because it maybe could create a head
+   Using builder legacy: Legacy probing system
+      head: Simulated HMD (Simulated HMD), view count: 2
+```
+
+Our builder declined to claim a head and Monado fell back to its own simulated
+device. The driver does not invent a VITURE HMD when no supported device is
+present.
+
+### M2 — stereo reaches the glasses: **NOT MEASURED** (needs the glasses attached)
+
+Blocked on: glasses on USB, and the display question below. The driver already
+declares the correct stereo geometry and will command the panel timing; what is
+unproven is the host-side output path.
+
+### M3 — Carina rotation drives orientation: **NOT MEASURED** (needs the glasses attached)
+
+Blocked on: glasses on USB plus the udev rule below, then
+`tools/viture-pose-dump` and the axes procedure.
+
 ## Hardware / SDK identity
 
 | fact | value | how |

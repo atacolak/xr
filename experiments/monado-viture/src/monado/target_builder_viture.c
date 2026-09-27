@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "xrt/xrt_config_drivers.h"
 #include "xrt/xrt_prober.h"
@@ -43,6 +44,43 @@ DEBUG_GET_ONCE_LOG_OPTION(viture_log, "VITURE_LOG", U_LOGGING_INFO)
 static const char *driver_list[] = {
     "viture",
 };
+
+/*!
+ * True when the operator asked for a static HMD with no vendor library involved.
+ *
+ * In this mode the builder deliberately does *not* require any attached
+ * hardware, so compositor setup and OpenXR enumeration can be validated before
+ * any tracking code exists. It is a bring-up mode, not a tracking path.
+ */
+static bool
+viture_static_hmd_requested(void)
+{
+	const char *v = getenv("VITURE_NO_SDK");
+	return v != NULL && v[0] != '\0' && strcmp(v, "0") != 0;
+}
+
+static bool
+viture_find_supported_device(uint16_t *out_product_id);
+
+/*!
+ * Choose which product to build a device for.
+ *
+ * In normal operation this requires an attached, supported device; in static
+ * bring-up mode it succeeds with a placeholder id and never calls the SDK.
+ *
+ * @param out_product_id Filled in with the product id.
+ * @return true if a device should be created.
+ */
+static bool
+viture_pick_product(uint16_t *out_product_id)
+{
+	if (viture_static_hmd_requested()) {
+		*out_product_id = 0;
+		return true;
+	}
+
+	return viture_find_supported_device(out_product_id);
+}
 
 /*!
  * Find the first attached, supported VITURE product.
@@ -87,7 +125,7 @@ viture_estimate_system(struct xrt_builder *xb,
 	U_ZERO(estimate);
 
 	uint16_t product_id = 0;
-	if (viture_find_supported_device(&product_id)) {
+	if (viture_pick_product(&product_id)) {
 		estimate->certain.head = true;
 	}
 
@@ -106,7 +144,7 @@ viture_open_system_impl(struct xrt_builder *xb,
 	DRV_TRACE_MARKER();
 
 	uint16_t product_id = 0;
-	if (!viture_find_supported_device(&product_id)) {
+	if (!viture_pick_product(&product_id)) {
 		VITURE_WARN("no supported VITURE device attached");
 		return XRT_ERROR_DEVICE_CREATION_FAILED;
 	}

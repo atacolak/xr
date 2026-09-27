@@ -23,7 +23,8 @@ PKGS=(
   libxcb1-dev libxcb-randr0-dev libxcb-xinput-dev libxcb-xrm-dev
   libxcb-glx0-dev libxcb-present-dev libxcb-shm0-dev libxcb-sync-dev
   libxcb-xfixes0-dev libxcb-xkb-dev libxcb-icccm4-dev libxcb-keysyms1-dev
-  libxcb-util0-dev libxcb-image0-dev libxcb-render-util0-dev
+  libxcb-util0-dev libxcb-image0-dev libxcb-render-util0-dev libxcb-render0-dev
+  libxcb-shape0-dev libxcb-xkb-dev
   libx11-dev libx11-xcb-dev libxext-dev libxxf86vm-dev
   # GL / EGL (Monado's GLES compositor paths)
   libgl1-mesa-dev libglvnd-dev libegl1-mesa-dev libgles2-mesa-dev
@@ -127,6 +128,30 @@ endforeach()
 p.write_text(t.replace('check_required_components(SDL2)', fix + 'check_required_components(SDL2)', 1))
 PYEOF
 fi
+
+
+# Some exported CMake package configs reference versioned sonames that live in a
+# separately installed runtime package (e.g. libjsoncpp-dev exporting
+# libjsoncpp.so.1.9.5 while the installed runtime provides .so.25). A config that
+# points at a missing file makes `find_package` a hard configure error, so drop
+# such packages entirely and let pkg-config or the bundled copy take over.
+python3 - "$SYSROOT" <<'PYEOF'
+import sys, re, shutil
+from pathlib import Path
+root = Path(sys.argv[1]) / 'usr/lib/x86_64-linux-gnu/cmake'
+for d in sorted(root.iterdir()) if root.is_dir() else []:
+    if not d.is_dir():
+        continue
+    for f in list(d.rglob('*.cmake')):
+        for m in re.finditer(r'"([^"]*lib[^"]*\.so(?:\.\d+)+)"', f.read_text(errors='replace')):
+            if not Path(m.group(1)).exists():
+                shutil.rmtree(d)
+                print(f'dropped broken cmake config: {d.name}')
+                break
+        else:
+            continue
+        break
+PYEOF
 
 cat > "$SYSROOT/env.sh" <<'EOF'
 # Source this to build against the private dependency sysroot.

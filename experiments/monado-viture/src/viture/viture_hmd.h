@@ -13,8 +13,13 @@
 
 #include "util/u_logging.h"
 
-#include "viture_modes.h"
 #include "viture_pose.h"
+
+/*!
+ * Panel timing description (viture_modes.h). Only ever held by pointer here, so
+ * consumers of this header do not need the vendor include path.
+ */
+struct viture_mode_info;
 
 #ifdef __cplusplus
 extern "C" {

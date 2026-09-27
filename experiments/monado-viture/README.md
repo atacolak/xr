@@ -32,10 +32,10 @@ See `components.toml` and `docs/architecture.md`.
 
 | | milestone | state |
 |---|---|---|
-| M0 | Monado instantiates a static "VITURE Luma Ultra" HMD | driver implemented; `VITURE_NO_SDK=1` exists for exactly this |
-| M1 | hello_xr enumerates it and renders stereo | not yet run |
-| M2 | frames reach the glasses correctly in stereo | not yet run |
-| M3 | Carina rotation drives HMD orientation (3DoF) | pose path implemented, not yet measured |
+| M0 | Monado instantiates a static "VITURE Luma Ultra" HMD | **measured** (no hardware needed, `VITURE_NO_SDK=1`) |
+| M1 | hello_xr enumerates it and renders stereo | **measured** (2 views, session FOCUSED 15 s, 0 errors) |
+| M2 | frames reach the glasses correctly in stereo | needs glasses attached |
+| M3 | Carina rotation drives HMD orientation (3DoF) | needs glasses attached |
 | M4 | BeamNG native Linux OpenXR starts and tracks | not started (`scripts/run-beamng` refuses) |
 | M5 | Carina translation enabled (6DoF) | 6DoF is the default path, unit unverified |
 | M6 | recentering, prediction, latency tuning | not started |
@@ -56,6 +56,23 @@ scripts/run-hello-xr              # run hello_xr against the built runtime
 scripts/run-beamng                # gated until M0-M3 are measured
 tools/restore-desktop save        # ALWAYS do this before touching displays
 ```
+
+## Operational gotcha: stale IPC socket
+
+`monado-service` binds `/run/user/1000/monado_comp_ipc`. If it is killed rather
+than shut down cleanly, the socket is left behind and the next start fails with
+`Address already in use`. Recover with:
+
+```sh
+rm -f /run/user/1000/monado_comp_ipc
+```
+
+Also note the service must run with a real PTY: it registers stdin in `epoll`,
+so a redirected/closed stdin makes it die with `epoll_ctl(stdin) failed`.
+
+A build against the default settings produces an *out-of-process* runtime
+(`libopenxr_monado.so` talks to `monado-service` over that socket), so the
+service must already be running before launching an OpenXR application.
 
 ## Environment knobs
 

@@ -29,6 +29,7 @@
 #include "os/os_threading.h"
 
 #include "math/m_api.h"
+#include "math/m_mathinclude.h"
 
 #include "util/u_debug.h"
 #include "util/u_device.h"
@@ -46,12 +47,25 @@
 #include "viture_compat.h"
 
 #include "viture_interface.h"
+#include "viture_modes.h"
 
 //! Never predict further ahead than this, whatever the compositor asks.
 #define VITURE_MAX_PREDICT_S 0.050
 
 //! Vendor pose status: 0 == stable, anything else == unstable.
 #define VITURE_POSE_STATUS_STABLE 0
+
+/*!
+ * Degrees to radians.
+ *
+ * Monado exposes no shared macro for this (and MATH_DEG_TO_RAD does not exist),
+ * so it is spelled out once here rather than inlined at each use.
+ */
+static inline float
+viture_deg_to_rad(float deg)
+{
+	return deg * (float)(M_PI / 180.0);
+}
 
 /*!
  * The device.
@@ -361,7 +375,7 @@ viture_hmd_setup_views(struct viture_hmd *hmd)
 	uint32_t eye_h = 0;
 	viture_mode_per_eye(mode, &eye_w, &eye_h);
 
-	const float per_eye_w_m = 2.0f * hmd->cfg.image_distance_m * tanf(MATH_DEG_TO_RAD(hmd->cfg.fov_h_deg) / 2.0f);
+	const float per_eye_w_m = 2.0f * hmd->cfg.image_distance_m * tanf(viture_deg_to_rad(hmd->cfg.fov_h_deg) / 2.0f);
 	const float per_eye_h_m = per_eye_w_m * ((float)eye_h / (float)eye_w);
 
 	struct u_device_simple_info info;
@@ -372,8 +386,8 @@ viture_hmd_setup_views(struct viture_hmd *hmd)
 	info.display.h_meters = per_eye_h_m;
 	info.lens_horizontal_separation_meters = hmd->cfg.ipd_meters;
 	info.lens_vertical_position_meters = 0.0f;
-	info.fov[0] = MATH_DEG_TO_RAD(hmd->cfg.fov_h_deg);
-	info.fov[1] = MATH_DEG_TO_RAD(hmd->cfg.fov_h_deg);
+	info.fov[0] = viture_deg_to_rad(hmd->cfg.fov_h_deg);
+	info.fov[1] = viture_deg_to_rad(hmd->cfg.fov_h_deg);
 
 	const bool ok = mode->view_count == 2 ? u_device_setup_split_side_by_side(&hmd->base, &info)
 	                                      : u_device_setup_one_eye(&hmd->base, &info);
@@ -520,7 +534,14 @@ viture_hmd_create(int product_id, const struct viture_config *cfg)
 	hmd->base.get_tracked_pose = viture_hmd_get_tracked_pose;
 	hmd->base.get_view_poses = u_device_get_view_poses;
 	hmd->base.get_visibility_mask = u_device_get_visibility_mask;
-	hmd->base.compute_distortion = u_distortion_mesh_none;
+
+	/*
+	 * Distortion: none, because these are BirdBath optics with a pre-corrected
+	 * virtual image. Use the setter rather than assigning compute_distortion
+	 * directly: the setter also fills in meshuv, and the compositor otherwise
+	 * has to fill in the defaults itself and logs a warning about the driver.
+	 */
+	u_distortion_mesh_set_none(&hmd->base);
 	hmd->base.destroy = viture_hmd_destroy;
 	hmd->base.name = XRT_DEVICE_GENERIC_HMD;
 	hmd->base.device_type = XRT_DEVICE_TYPE_HMD;
@@ -582,7 +603,7 @@ viture_hmd_create(int product_id, const struct viture_config *cfg)
 	u_var_add_ro_f32(hmd, &hmd->cfg.ipd_meters, "ipd_meters");
 	u_var_add_ro_f32(hmd, &hmd->cfg.fov_h_deg, "fov_h_deg");
 
-	if (u_var_is_running()) {
+	if (hmd->log_level <= U_LOGGING_DEBUG) {
 		u_device_dump_config(&hmd->base, __func__, hmd->market_name);
 	}
 
