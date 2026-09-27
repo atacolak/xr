@@ -1,16 +1,23 @@
 #!/data/data/com.termux/files/usr/bin/sh
-# Play Store Termux FileReceiver execute path.
+# Play Store Termux FileReceiver execute path for the DeX HERDR launcher.
 # ACTION_SEND of a Patterns.WEB_URL extra runs this file with the URL as $1.
 # Only the HERDR sentinel starts Mosh/Herdr. Other URLs are not hijacked.
-set -e
+#
+# sfub mosh is pinned to UDP 60022. A second client cannot bind that port
+# while an existing Fold -> sfub Herdr session is alive, so reuse it.
 url="${1:-}"
 case "$url" in
   https://herdr.colak.sh/launch|http://herdr.colak.sh/launch)
+    if pgrep -f 'mosh-client .* 60022' >/dev/null 2>&1; then
+      printf 'HERDR already connected on mosh UDP 60022.\n'
+      printf 'Switch to that Termux session if this pane is empty.\n'
+      exec "${SHELL:-/data/data/com.termux/files/usr/bin/bash}" -l
+    fi
     exec mosh -p 60022 sfub -- herdr
     ;;
   *)
     printf 'termux-url-opener: %s\n' "$url"
     printf 'HERDR sentinel is https://herdr.colak.sh/launch\n'
-    exec "${SHELL:-/data/data/com.termux/files/usr/bin/sh}" -i
+    exec "${SHELL:-/data/data/com.termux/files/usr/bin/bash}" -l
     ;;
 esac

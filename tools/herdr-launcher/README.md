@@ -28,6 +28,18 @@ entries. Play Store Termux `googleplay.2026.06.21` does **not** export
 It only treats the sentinel URL as HERDR; other URLs are not hijacked
 into Herdr.
 
+Play Store Termux loads `~/.config/termux/termux.properties` when that
+file exists (not only `~/.termux/termux.properties`). FileReceiver
+`ACTION_RUN` requires:
+
+    allow-external-apps = true
+
+Canonical extra-keys live in the same file. See `fold-thinclient/termux.properties`.
+
+sfub Mosh is pinned to UDP **60022**. A second client cannot bind that
+port while a Fold Herdr session is already alive. The opener reuses the
+live client in that case instead of starting a second Mosh.
+
 ## Build / install
 
 ```sh
@@ -39,6 +51,10 @@ scripts/xrctl launch sh.colak.herdrlauncher
 
 Uses the local Android debug keystore for iterative `adb install -r`.
 Do not uninstall to redeploy. APKs are gitignored.
+
+`xrctl smoke sh.colak.herdrlauncher` reports FAIL_NOT_RESUMED. That is
+expected: HERDR is a trampoline into Termux, so MainActivity is not the
+resumed activity after settle.
 
 ## Manual step
 
@@ -54,12 +70,12 @@ Play Store Termux `googleplay.2026.06.21` (`versionCode=141`):
   `https://herdr.colak.sh/launch` -> `~/bin/termux-url-opener`.
 - `cmd package resolve-activity` resolves `sh.colak.herdrlauncher/.MainActivity`.
 - Badging label is `HERDR`.
-- Remote `am start` starts FileReceiver, then
-  `TermuxActivityInternal` `ACTION_RUN` of the url-opener (`file:` URI).
+- Remote `am start` starts FileReceiver, then `TermuxActivityInternal`
+  `ACTION_RUN` of the url-opener. The opener was observed to run with
+  argv `https://herdr.colak.sh/launch`.
 - Launch happened on DeX display 8 / Desk (HoneySpace `SecondaryLauncher`
   and Dex taskbar were active). Termux came to foreground in freeform.
 - TermuxActivity is `singleTask`. If Termux already has a task, RUN is
-  delivered to it (`START_TASK_TO_FRONT`). A new mosh-client may not appear
-  when an interactive Mosh session is already the Termux session.
+  delivered to it (`START_TASK_TO_FRONT`) and a new session is added.
 - Pinning HERDR from DeX Apps onto the desktop/taskbar is a manual Samsung
   user action. The Apps entry itself is a normal MAIN/LAUNCHER activity.

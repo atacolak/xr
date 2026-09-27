@@ -59,14 +59,18 @@ resumed, crashed, or stage-A alive.
 
 ## Termux extra keys (Fold interactive)
 
-Canonical extra-key row for the human Mosh session:
+Play Store Termux loads `~/.config/termux/termux.properties` when that
+file exists. Put settings there (canonical copy:
+`fold-thinclient/termux.properties`).
 
 ```
+allow-external-apps = true
 extra-keys = [['ESC','/','-','HOME','UP','END','PGUP'],['TAB','CTRL','ALT','LEFT','DOWN','RIGHT','PGDN']]
 ```
 
-Then `termux-reload-settings`. This is Termux UX, not an Android app
-feature.
+`allow-external-apps` is required for the DeX HERDR launcher
+(FileReceiver `ACTION_RUN`). Then `termux-reload-settings`. Some
+properties still need a Termux process restart.
 
 ## Pairing (rare)
 
