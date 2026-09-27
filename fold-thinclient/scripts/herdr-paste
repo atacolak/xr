@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Atomic multiline send into the focused (or named) Herdr pane.
+
+This is the semantic input primitive for Fold clipboard / later STT / UxSpace.
+It uses `herdr pane send-text`, which does not submit Enter.
+
+Usage:
+  herdr-paste                 # stdin -> focused pane
+  herdr-paste wJ:p1           # stdin -> that pane
+  herdr-paste --pane wJ:p1
+  pbpaste | herdr-paste
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+
+
+def herdr_json(args: list[str]) -> dict:
+    p = subprocess.run(["herdr", *args], check=False, capture_output=True, text=True)
+    raw = p.stdout.strip() or p.stderr.strip()
+    if p.returncode != 0 and not raw:
+        sys.stderr.write(p.stderr or "herdr failed\n")
+        sys.exit(p.returncode or 1)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        sys.stderr.write(raw + "\n")
+        sys.exit(1)
+
+
+def focused_pane() -> str:
+    data = herdr_json(["pane", "current"])
+    pane = (data.get("result") or {}).get("pane") or {}
+    pid = pane.get("pane_id")
+    if pid:
+        return pid
+    listed = herdr_json(["pane", "list"])
+    panes = (listed.get("result") or {}).get("panes") or []
+    for pane in panes:
+        if pane.get("focused"):
+            return pane["pane_id"]
+    sys.stderr.write("no focused herdr pane\n")
+    sys.exit(2)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("pane", nargs="?", help="pane id, default focused")
+    ap.add_argument("--pane", dest="pane_opt", help="pane id")
+    ap.add_argument("--submit", action="store_true", help="also send Enter after the block")
+    args = ap.parse_args()
+    pane = args.pane_opt or args.pane or focused_pane()
+    text = sys.stdin.read()
+    if not text:
+        sys.stderr.write("empty stdin\n")
+        return 1
+    # herdr pane send-text treats the rest of argv as the payload
+    p = subprocess.run(["herdr", "pane", "send-text", pane, text], check=False)
+    if p.returncode != 0:
+        return p.returncode
+    if args.submit:
+        return subprocess.run(["herdr", "pane", "send-keys", pane, "enter"], check=False).returncode
+    print(f"sent {len(text)} bytes to {pane}", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

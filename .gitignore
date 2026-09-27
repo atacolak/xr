@@ -1,0 +1,30 @@
+# Local run artifacts (logcat, screenshots, APK copies, classify output).
+.dev/
+**/.dev/
+
+# Built Android packages. Source stays; binaries do not.
+*.apk
+*.apk.idsig
+*.aab
+*.aar
+
+# Signing material.
+*.keystore
+*.jks
+
+# Android / Java build trees.
+**/build/
+.gradle/
+local.properties
+*.iml
+.idea/
+
+# Proprietary vendor SDKs (never commit).
+**/jniLibs/
+**/SDK/
+/Viture/
+
+# OS / editor
+.DS_Store
+*.swp
+*~

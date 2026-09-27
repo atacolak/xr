@@ -1,0 +1,36 @@
+# XR component map
+#
+# This file points at independently owned repositories. It is not a lockfile
+# and it does not vendor those trees. Paths are local checkouts on sfub
+# when they exist; repo URLs are the source of truth.
+
+[uxspace]
+repo = "https://github.com/atacolak/uxspace"
+upstream = "https://github.com/darkclad/uxspace"
+branch = "fold5-luma-ultra"
+local = "/home/sf/workspace/uxspace"
+role = "Android spatial-shell experiment (preserved; not the long-term surface)"
+
+[voicecat]
+repo = "https://github.com/atacolak/voicecat"
+branch = "main"
+local = "/home/sf/workspace/voicecat"
+role = "voice interaction / call path (PCM in, spoken reply out)"
+
+[speech_core]
+repo = "https://github.com/atacolak/speech-core"
+branch = "lab/tts-lab"
+local = "/home/sf/workspace/speech-core"
+role = "speech runtime (VAD, ASR, turn-close, TTS leftover)"
+
+[herdr]
+repo = "https://github.com/atacolak/herdr"
+upstream = "https://github.com/herdrdev/herdr"
+branch = "master"
+local = "/home/sf/workspace/herdr"
+role = "terminal runtime for agents; Fold interactive session target"
+
+[oh_my_pi]
+repo = "https://github.com/atacolak/oh-my-pi"
+local = "/home/sf/workspace/oh-my-pi"
+role = "agent harness used inside Herdr (OMP stays on sfub, not on the Fold)"

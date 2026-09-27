@@ -1,0 +1,3 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# DeX / Termux launcher shortcut: interactive OMP via Herdr on sfub.
+exec mosh -p 60022 sfub -- herdr

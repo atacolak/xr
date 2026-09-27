@@ -1,0 +1,7 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Canonical Play-Termux boot script. Boot receiver is built into
+# com.termux (googleplay.2026.06.21); do not install F-Droid Termux:Boot.
+termux-wake-lock
+export SVDIR="${PREFIX}/var/service"
+export LOGDIR="${PREFIX}/var/log"
+. "${PREFIX}/etc/profile.d/start-services.sh"

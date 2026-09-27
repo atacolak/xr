@@ -1,0 +1,26 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Pin UDP 60022 for Host sfub so NetBird stays simple.
+# Pass-through if the user already specified -p/--port.
+MOSH="/data/data/com.termux/files/usr/bin/mosh"
+has_port=0
+host=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -p|--port) has_port=1 ;;
+  esac
+  case "$a" in
+    -p|--port|-p=*|--port=*) has_port=1 ;;
+    -*) ;;
+    *) [ -z "$host" ] && host="$a" ;;
+  esac
+  prev="$a"
+done
+case "$host" in
+  sfub|sf@sfub|sf@10.77.67.147)
+    if [ "$has_port" -eq 0 ]; then
+      exec "$MOSH" -p 60022 "$@"
+    fi
+    ;;
+esac
+exec "$MOSH" "$@"

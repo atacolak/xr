@@ -1,0 +1,14 @@
+#!/data/data/com.termux/files/usr/bin/sh
+# Fold-side semantic paste: clipboard block -> sfub herdr pane send-text.
+# Does not synthesize keystrokes. Prefers termux-clipboard-get when the
+# Play Termux clipboard API answers; otherwise reads stdin.
+set -e
+clip=""
+if command -v termux-clipboard-get >/dev/null 2>&1; then
+  clip=$(termux-clipboard-get 2>/dev/null || true)
+fi
+if [ -z "$clip" ]; then
+  echo "clipboard empty or Termux clipboard API unavailable; paste into stdin, then Ctrl-D" >&2
+  clip=$(cat)
+fi
+printf '%s' "$clip" | ssh -o BatchMode=yes sfub herdr-paste "$@"
