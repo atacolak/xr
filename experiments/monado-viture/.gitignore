@@ -1,0 +1,6 @@
+# Built diagnostics (the source is tracked; the binary is not).
+tools/viture-pose-dump
+
+# Local sysroot / build state must never live in the repo.
+build/
+.cxx/

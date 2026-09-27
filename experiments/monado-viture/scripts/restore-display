@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Thin wrapper so `scripts/restore-display` matches the documented layout.
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/tools/restore-desktop" "$@"

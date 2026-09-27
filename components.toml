@@ -34,3 +34,9 @@ role = "terminal runtime for agents; Fold interactive session target"
 repo = "https://github.com/atacolak/oh-my-pi"
 local = "/home/sf/workspace/oh-my-pi"
 role = "agent harness used inside Herdr (OMP stays on sfub, not on the Fold)"
+
+[monado]
+repo = "https://gitlab.freedesktop.org/monado/monado"
+local = "/home/sf/workspace/monado"
+role = "OpenXR runtime; experiments/monado-viture adds a VITURE Luma Ultra xrt_device driver (patch in that experiment)"
+note = "not vendored; experiments/monado-viture/patches/ pins the base commit the driver patch applies to"

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Experimental BeamNG.drive OpenXR launcher for the VITURE Luma Ultra.
+#
+# SAFETY: this does NOT touch the known-good non-VR launcher
+# (~/Games/beamng/bin/launch-beamng) and does not edit any BeamNG file. It only
+# sets the OpenXR/Monado environment for one invocation.
+#
+# GATE: this refuses to run until milestones M0-M3 are actually demonstrated,
+# because starting BeamNG against a half-working runtime just produces a
+# confusing hang. Set VITURE_XR_ALLOW_EARLY=1 to override.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MONADO="${MONADO_DIR:-$HOME/workspace/monado}"
+SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+BUILD="$MONADO/build"
+BEAMNG_BIN="${BEAMNG_BIN:-$HOME/Games/beamng/bin/BeamNG.drive.x64}"
+
+if [ "${VITURE_XR_ALLOW_EARLY:-0}" != "1" ]; then
+  cat >&2 <<'EOF'
+run-beamng: refused.
+
+BeamNG's native Linux OpenXR mode needs, in order:
+  M0  Monado instantiates a static VITURE HMD
+  M1  an OpenXR app enumerates it and renders stereo
+  M2  those frames reach the glasses in stereo SBS
+  M3  Carina rotation drives the head pose
+
+Only M0/M1 are expected to be validated so far. Track state in
+docs/measurements.md, then re-run, or set VITURE_XR_ALLOW_EARLY=1 to force.
+EOF
+  exit 2
+fi
+
+RUNTIME_JSON="$(find "$BUILD" -maxdepth 4 -name 'openxr_monado*.json' | head -1)"
+[ -n "$RUNTIME_JSON" ] || { echo "no monado runtime json"; exit 1; }
+[ -x "$BEAMNG_BIN" ] || { echo "BeamNG binary not found: $BEAMNG_BIN"; exit 1; }
+
+export LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XR_RUNTIME_JSON="$RUNTIME_JSON"
+exec "$BEAMNG_BIN" "$@"

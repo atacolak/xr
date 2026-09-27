@@ -21,7 +21,8 @@ their own repositories. XR refers to them; it does not absorb them.
 - `devices/` — facts about the current Fold + Luma Ultra target
 - `docs/` — ADB, Android iteration, architecture, input, spatial agents
 - `scripts/xrctl` — generic Fold-local Android device harness
-- `experiments/` — UxSpace postmortem and the next systems to study
+- `experiments/` — UxSpace postmortem, next systems to study, and `monado-viture/`
+  (the VITURE Luma Ultra OpenXR driver on Linux)
 - `integrations/` — contracts with Voicecat, speech-core, and Herdr
 - `tools/herdr-launcher/` — tiny DeX-visible HERDR launcher APK
 - `fold-thinclient/` — existing Termux/WADB glue (preserved)
@@ -29,8 +30,11 @@ their own repositories. XR refers to them; it does not absorb them.
 
 ## Next frontier
 
-See [NEXT.md](NEXT.md). The next active exploration is **Stardust XR**.
-Do not start that installation from this consolidation task.
+See [NEXT.md](NEXT.md).
+
+Active line of work is now **`experiments/monado-viture/`**: presenting the Luma Ultra
+as a real OpenXR HMD through Monado on Linux, which is NEXT.md item 4 made concrete.
+Stardust XR remains the frontier after that.
 
 ## Layout rule
 

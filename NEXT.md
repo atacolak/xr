@@ -23,9 +23,13 @@ It is the ordered exploration after UxSpace bring-up was preserved.
    - workspace-controller architecture
    - external control ideas
 
-4. Luma / Linux display + tracking path
+4. Luma / Linux display + tracking path     <-- ACTIVE, see experiments/monado-viture/
    - determine the cleanest path for Luma Ultra rendering/tracking into the Linux XR stack
    - evaluate existing Luma/Linux/OpenXR work before implementing our own
+   - outcome of that evaluation: no Monado driver for VITURE exists anywhere, so we
+     wrote one (xrt_device + builder, small patch, see that experiment's docs/architecture.md)
+   - XRLinuxDriver / Breezy drive the same glasses on Linux but with no OpenXR at all
+     (shader-injection + shm); they are prior art for the device layer, not a runtime
 
 5. Spatial agent architecture
    - semantic scene query

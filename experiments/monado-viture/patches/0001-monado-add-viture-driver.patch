@@ -1,0 +1,140 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 6556fa7..a9d1b2c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -385,6 +385,8 @@ option_with_deps(XRT_BUILD_DRIVER_VF "Build video frame driver (for video file s
+ option_with_deps(XRT_BUILD_DRIVER_VIVE "Enable driver for HTC Vive, Vive Pro, Valve Index, and their controllers" DEPENDS ZLIB_FOUND XRT_HAVE_LINUX XRT_MODULE_AUX_VIVE)
+ option_with_deps(XRT_BUILD_DRIVER_WMR "Enable Windows Mixed Reality driver" DEPENDS XRT_HAVE_LINUX)
+ option_with_deps(XRT_BUILD_DRIVER_XREAL_AIR "Enable Xreal Air HMD driver" DEPENDS XRT_HAVE_HIDAPI)
++# OFF by default: needs the proprietary VITURE SDK, which is not redistributable.
++option(XRT_BUILD_DRIVER_VITURE "Enable VITURE glasses HMD driver (needs the VITURE Linux SDK; set VITURE_SDK_DIR)" OFF)
+ option_with_deps(XRT_BUILD_DRIVER_SIMULAVR "Enable simula driver" DEPENDS XRT_HAVE_REALSENSE)
+ option_with_deps(XRT_BUILD_DRIVER_SOLARXR "Enable SolarXR driver" DEPENDS XRT_HAVE_LINUX XRT_MODULE_IPC)
+ option(XRT_BUILD_DRIVER_SIMULATED "Enable simulated driver" ON)
+@@ -501,6 +503,7 @@ list(
+ 	"ULV2"
+ 	"ULV5"
+ 	"VF"
++	"VITURE"
+ 	"DEPTHAI"
+ 	"VIVE"
+ 	"QWERTY"
+@@ -765,6 +768,7 @@ message(STATUS "#    DRIVER_VF:                   ${XRT_BUILD_DRIVER_VF}")
+ message(STATUS "#    DRIVER_VIVE:                 ${XRT_BUILD_DRIVER_VIVE}")
+ message(STATUS "#    DRIVER_WMR:                  ${XRT_BUILD_DRIVER_WMR}")
+ message(STATUS "#    DRIVER_XREAL_AIR:            ${XRT_BUILD_DRIVER_XREAL_AIR}")
++message(STATUS "#    DRIVER_VITURE:               ${XRT_BUILD_DRIVER_VITURE}")
+ message(STATUS "#    DRIVER_STEAMVR_LIGHTHOUSE:   ${XRT_BUILD_DRIVER_STEAMVR_LIGHTHOUSE}")
+ message(STATUS "#    DRIVER_SOLARXR:              ${XRT_BUILD_DRIVER_SOLARXR}")
+ message(STATUS "#####----- Config -----#####")
+diff --git a/cmake/MonadoSetOptions.cmake b/cmake/MonadoSetOptions.cmake
+index 8f7fa6f..61f305e 100644
+--- a/cmake/MonadoSetOptions.cmake
++++ b/cmake/MonadoSetOptions.cmake
+@@ -105,6 +105,7 @@ function(monado_set_options)
+ 		XRT_BUILD_DRIVER_ULV2
+ 		XRT_BUILD_DRIVER_ULV5
+ 		XRT_BUILD_DRIVER_VF
++		XRT_BUILD_DRIVER_VITURE
+ 		XRT_BUILD_DRIVER_VIVE
+ 		XRT_BUILD_DRIVER_WMR
+ 		XRT_BUILD_DRIVER_XREAL_AIR
+diff --git a/src/xrt/drivers/CMakeLists.txt b/src/xrt/drivers/CMakeLists.txt
+index 5ec9910..682d15b 100644
+--- a/src/xrt/drivers/CMakeLists.txt
++++ b/src/xrt/drivers/CMakeLists.txt
+@@ -147,6 +147,41 @@ if(XRT_BUILD_DRIVER_XREAL_AIR)
+ 	list(APPEND ENABLED_HEADSET_DRIVERS xreal_air)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_VITURE)
++	# The VITURE SDK is proprietary and not redistributable, so it is not
++	# vendored: point VITURE_SDK_DIR at a directory containing
++	# include/viture_glasses_provider.h and x86_64/libglasses.so.
++	set(VITURE_SDK_DIR
++	    ""
++	    CACHE PATH "Directory of the VITURE XR Glasses SDK for Linux (contains include/ and x86_64/)"
++		)
++	find_path(VITURE_SDK_INCLUDE_DIR viture_glasses_provider.h PATHS "${VITURE_SDK_DIR}/include" NO_DEFAULT_PATH)
++	find_library(VITURE_SDK_LIBRARY NAMES glasses PATHS "${VITURE_SDK_DIR}/x86_64" NO_DEFAULT_PATH)
++	if(NOT VITURE_SDK_INCLUDE_DIR OR NOT VITURE_SDK_LIBRARY)
++		message(
++			FATAL_ERROR
++				"XRT_BUILD_DRIVER_VITURE=ON but the VITURE SDK was not found.\n"
++				"Pass -DVITURE_SDK_DIR=<dir>, where <dir> contains include/viture_glasses_provider.h "
++				"and x86_64/libglasses.so."
++			)
++	endif()
++
++	add_library(
++		drv_viture STATIC
++		viture/viture_hmd.h
++		viture/viture_hmd.c
++		viture/viture_interface.h
++		viture/viture_modes.h
++		viture/viture_modes.c
++		viture/viture_pose.h
++		viture/viture_pose.c
++		viture/viture_probe.c
++		)
++	target_link_libraries(drv_viture PRIVATE xrt-interfaces aux_util ${VITURE_SDK_LIBRARY})
++	target_include_directories(drv_viture PRIVATE ${VITURE_SDK_INCLUDE_DIR})
++	list(APPEND ENABLED_HEADSET_DRIVERS viture)
++endif()
++
+ if(XRT_BUILD_DRIVER_UVC)
+ 	add_library(drv_uvc STATIC uvc/uvc_interface.h uvc/uvc_driver.c uvc/uvc_internal.h)
+ 	target_link_libraries(drv_uvc PRIVATE xrt-interfaces aux_os aux_util ${LIBUSB1_LIBRARIES})
+diff --git a/src/xrt/targets/common/CMakeLists.txt b/src/xrt/targets/common/CMakeLists.txt
+index f3f46c9..46324b4 100644
+--- a/src/xrt/targets/common/CMakeLists.txt
++++ b/src/xrt/targets/common/CMakeLists.txt
+@@ -84,6 +84,11 @@ if(XRT_BUILD_DRIVER_XREAL_AIR)
+ 	target_link_libraries(target_lists PRIVATE drv_xreal_air)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_VITURE)
++	target_sources(target_lists PRIVATE target_builder_viture.c)
++	target_link_libraries(target_lists PRIVATE drv_viture)
++endif()
++
+ ###
+ # Drivers
+ #
+@@ -233,6 +238,10 @@ if(XRT_BUILD_DRIVER_XREAL_AIR)
+ 	target_link_libraries(target_lists PRIVATE drv_xreal_air)
+ endif()
+ 
++if(XRT_BUILD_DRIVER_VITURE)
++	target_link_libraries(target_lists PRIVATE drv_viture)
++endif()
++
+ if(XRT_BUILD_DRIVER_EUROC)
+ 	target_link_libraries(target_lists PRIVATE drv_euroc)
+ endif()
+diff --git a/src/xrt/targets/common/target_lists.c b/src/xrt/targets/common/target_lists.c
+index 78efb9b..802e5c7 100644
+--- a/src/xrt/targets/common/target_lists.c
++++ b/src/xrt/targets/common/target_lists.c
+@@ -97,6 +97,10 @@
+ #include "xreal_air/xreal_air_interface.h"
+ #endif
+ 
++#ifdef XRT_BUILD_DRIVER_VITURE
++#include "viture/viture_interface.h"
++#endif
++
+ #ifdef XRT_BUILD_DRIVER_EUROC
+ #include "euroc/euroc_interface.h"
+ #endif
+@@ -164,6 +168,10 @@ xrt_builder_create_func_t target_builder_list[] = {
+     xreal_air_builder_create,
+ #endif // T_BUILDER_XREAL_AIR
+ 
++#ifdef XRT_BUILD_DRIVER_VITURE
++    viture_builder_create,
++#endif // T_BUILDER_VITURE
++
+ #ifdef T_BUILDER_LEGACY
+     t_builder_legacy_create,
+ #endif // T_BUILDER_LEGACY

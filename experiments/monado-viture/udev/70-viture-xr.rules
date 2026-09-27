@@ -1,0 +1,18 @@
+# VITURE glasses (USB vendor 0x35CA) access for the logged-in seat user.
+#
+# The vendor SDK's Linux transport opens the device over libusb, and the Carina
+# VIO cameras over sibling interfaces. Without these rules only root can open
+# those nodes, which makes the OpenXR driver unusable in a normal session.
+#
+# Install once (root required):
+#   sudo cp 70-viture-xr.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+#
+# Rule shape matches what the independently developed XRLinuxDriver ships for
+# the same hardware.
+
+SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", KERNEL=="hiddev[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="tty", KERNEL=="ttyACM[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"

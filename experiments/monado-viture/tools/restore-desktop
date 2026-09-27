@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# Restore the X11/NVIDIA output topology after an XR/compositor experiment.
+#
+# XR compositor work on this box has already left a stale 1920x1200 framebuffer
+# parked on a *disconnected* HDMI-0 output. This script is the way back:
+#
+#   restore-desktop save     # snapshot current topology (do this FIRST)
+#   restore-desktop status   # show current committed state
+#   restore-desktop restore  # replay the last snapshot
+#   restore-desktop known-good  # last-resort: ultrawide primary, glasses off
+#
+# Never writes permanent NVIDIA/X11 configuration; only runtime xrandr state.
+set -euo pipefail
+
+export DISPLAY="${DISPLAY:-:1}"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/monado-viture"
+SNAP="$STATE_DIR/xrandr.snapshot"
+
+die() { echo "restore-desktop: $*" >&2; exit 1; }
+
+require_x() {
+  xrandr --query >/dev/null 2>&1 || die "no usable X display on DISPLAY=$DISPLAY"
+}
+
+cmd_save() {
+  require_x
+  mkdir -p "$STATE_DIR"
+  {
+    echo "# xrandr topology snapshot $(date -u +%FT%TZ)"
+    echo "# outputs:"
+    xrandr --query | awk '/^[A-Za-z0-9-]+ (connected|disconnected)/ {print}'
+    echo "# active:"
+    xrandr --listmonitors
+  } > "$SNAP"
+  xrandr --query > "$STATE_DIR/xrandr.full.snapshot"
+  echo "saved $SNAP"
+  cat "$SNAP"
+}
+
+cmd_status() {
+  require_x
+  echo "DISPLAY=$DISPLAY"
+  xrandr --query | awk '/^[A-Za-z0-9-]+ (connected|disconnected)/ {print}'
+  echo "--- active outputs ---"
+  xrandr --listmonitors
+  echo "--- snapshot ---"
+  [ -f "$SNAP" ] && cat "$SNAP" || echo "(none; run: restore-desktop save)"
+}
+
+# Replay the saved snapshot: re-enable what was on, turn off what was off.
+cmd_restore() {
+  require_x
+  [ -f "$STATE_DIR/xrandr.full.snapshot" ] || die "no snapshot; cannot restore"
+  local line out state mode
+  while read -r out state rest; do
+    case "$out" in
+      [A-Za-z]*) ;;
+      *) continue ;;
+    esac
+    case "$state" in
+      connected|disconnected) ;;
+      *) continue ;;
+    esac
+    if printf '%s' "$rest" | grep -qE '[0-9]+x[0-9]+\+'; then
+      mode="$(printf '%s' "$rest" | awk '{print $1}')"
+      printf '%s' "$rest" | grep -q 'primary' && \
+        xrandr --output "$out" --mode "$mode" --primary --auto || \
+        xrandr --output "$out" --mode "$mode" --auto
+      echo "restored $out $mode"
+    else
+      xrandr --output "$out" --off
+      echo "restored $out off"
+    fi
+  done < <(sed -n '/connected\|disconnected/p' "$STATE_DIR/xrandr.full.snapshot" | sed 's/ (normal.*//')
+  echo "done. verify with: restore-desktop status"
+}
+
+# The topology this machine is expected to run in for normal work.
+cmd_known_good() {
+  require_x
+  xrandr --output DP-0 --mode 3440x1440 --primary --auto
+  for o in HDMI-0 DP-1 DP-2 DP-3 DP-4 DP-5; do
+    xrandr --query | grep -q "^$o " && xrandr --output "$o" --off || true
+  done
+  xrandr --query | awk '/^[A-Za-z0-9-]+ (connected|disconnected)/ {print}'
+}
+
+case "${1:-status}" in
+  save) cmd_save ;;
+  status) cmd_status ;;
+  restore) cmd_restore ;;
+  known-good) cmd_known_good ;;
+  *) die "usage: restore-desktop [save|status|restore|known-good]" ;;
+esac

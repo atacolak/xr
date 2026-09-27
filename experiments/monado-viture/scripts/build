@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Build Monado with the VITURE driver.
+#
+# Monado does not support out-of-tree drivers (dlopen is only used for tracking
+# libs), so this copies our driver sources into a Monado checkout and applies
+# patches/0001-monado-add-viture-driver.patch to the build plumbing.
+#
+# Usage:
+#   scripts/build                 # configure + build
+#   scripts/build --clean         # wipe the build dir first
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MONADO="${MONADO_DIR:-$HOME/workspace/monado}"
+SYSROOT="${MONADO_SYSROOT:-$HOME/workspace/monado-deps}"
+SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+BUILD="$MONADO/build"
+
+[ -d "$MONADO/.git" ] || { echo "no Monado checkout at $MONADO (set MONADO_DIR)"; exit 1; }
+[ -f "$SDK/include/viture_glasses_provider.h" ] || { echo "no VITURE SDK at $SDK (set VITURE_SDK_DIR)"; exit 1; }
+
+# Build-time deps live in a private sysroot on this host; see
+# scripts/install-deps-local.sh for why root is not used.
+if [ -f "$SYSROOT/env.sh" ]; then
+  # shellcheck disable=SC1090
+  . "$SYSROOT/env.sh"
+fi
+export PATH="$SYSROOT/usr/bin:$PATH"
+export PKG_CONFIG_PATH="$SYSROOT/usr/lib/x86_64-linux-gnu/pkgconfig:$SYSROOT/usr/share/pkgconfig"
+export CMAKE_PREFIX_PATH="$SYSROOT"
+unset PKG_CONFIG_SYSROOT_DIR || true
+
+"$ROOT/scripts/patch-monado.sh" apply
+
+if [ "${1:-}" = "--clean" ]; then
+  rm -rf "$BUILD"
+fi
+
+# Focused feature set: the debug GUI, window peek and the qwerty driver are
+# irrelevant to a head-mounted stereo target and pull in an SDL2/ImGui surface
+# that would otherwise be built (and can fail) for no benefit here.
+cmake -S "$MONADO" -B "$BUILD" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DXRT_BUILD_DRIVER_VITURE=ON \
+  -DVITURE_SDK_DIR="$SDK" \
+  -DXRT_MODULE_MONADO_GUI=OFF \
+  -DXRT_FEATURE_DEBUG_GUI=OFF \
+  -DXRT_FEATURE_WINDOW_PEEK=OFF \
+  -DXRT_BUILD_DRIVER_QWERTY=OFF \
+  ${MONADO_EXTRA_CMAKE_ARGS:-}
+
+ninja -C "$BUILD" -j"$(nproc)"
+echo
+echo "built. runtime bits:"
+ls -1 "$BUILD"/src/xrt/targets/service/monado-service 2>/dev/null || true
+find "$BUILD" -maxdepth 3 -name 'libopenxr_monado.so' -o -maxdepth 3 -name '*.json' -path '*openxr*' 2>/dev/null | head

@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Offline unit tests for the Carina -> Monado pose mapping.
+# Needs no glasses, no vendor library, no Monado build - only Monado's headers
+# and libm.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MONADO="${MONADO_DIR:-$HOME/workspace/monado}"
+OUT="$(mktemp -d)"
+trap 'rm -rf "$OUT"' EXIT
+
+cc -std=c11 -O1 -Wall -Wextra -o "$OUT/test_coordinates" \
+  "$ROOT/tests/test_coordinates.c" \
+  "$ROOT/src/viture/viture_pose.c" \
+  -I"$ROOT/src/viture" \
+  -I"$MONADO/src/xrt/include" \
+  -I"$MONADO/build/src/xrt/include" \
+  -lm
+
+"$OUT/test_coordinates"
