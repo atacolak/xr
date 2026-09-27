@@ -54,4 +54,5 @@ ninja -C "$BUILD" -j"$(nproc)"
 echo
 echo "built. runtime bits:"
 ls -1 "$BUILD"/src/xrt/targets/service/monado-service 2>/dev/null || true
-find "$BUILD" -maxdepth 3 -name 'libopenxr_monado.so' -o -maxdepth 3 -name '*.json' -path '*openxr*' 2>/dev/null | head
+find "$BUILD" -maxdepth 3 -name 'libopenxr_monado.so' 2>/dev/null
+find "$BUILD" -maxdepth 3 -name 'openxr_monado*.json' 2>/dev/null

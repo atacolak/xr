@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Start monado-service for the VITURE driver.
+#
+#   scripts/run-service                    # no hardware: static HMD, compute compositor
+#   VITURE_NO_SDK=0 scripts/run-service    # real vendor path (needs the glasses attached)
+#
+# monado-service binds a unix socket and registers stdin in epoll, which makes
+# two failure modes repetitive enough to be handled here:
+#
+#   * a service that was killed instead of shut down leaves the socket behind,
+#     and the next start dies with "Address already in use";
+#   * with stdin redirected or closed the service dies with an epoll_ctl error.
+#
+# So: clear a socket that no live process owns, and insist on a terminal (this
+# script is meant to be run by the operator, or as a supervised pty process).
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MONADO="${MONADO_DIR:-$HOME/workspace/monado}"
+SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+BUILD="$MONADO/build"
+SERVICE="$BUILD/src/xrt/targets/service/monado-service"
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
+
+[ -x "$SERVICE" ] || { echo "no service binary at $SERVICE -- run scripts/build first" >&2; exit 1; }
+
+if pgrep -x monado-service >/dev/null 2>&1; then
+  echo "monado-service is already running (pid $(pgrep -x monado-service | head -1))" >&2
+  echo "the IPC socket is single-instance; stop it before starting another" >&2
+  exit 1
+fi
+
+if [ -S "$SOCK" ]; then
+  echo "removing stale IPC socket left by an unclean exit: $SOCK" >&2
+  rm -f "$SOCK"
+fi
+
+if [ ! -t 0 ]; then
+  echo "warning: stdin is not a terminal." >&2
+  echo "         the service epolls stdin and exits immediately without one;" >&2
+  echo "         run it in a terminal or as a supervised pty, not with </dev/null." >&2
+fi
+
+# The vendor library and its siblings are loaded from the SDK tree.
+export LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export VITURE_LOG="${VITURE_LOG:-debug}"
+export XRT_COMPOSITOR_LOG="${XRT_COMPOSITOR_LOG:-info}"
+export XRT_COMPOSITOR_COMPUTE="${XRT_COMPOSITOR_COMPUTE:-1}"
+
+# Default to the no-hardware static HMD; VITURE_NO_SDK=0 opts into the vendor path.
+if [ "${VITURE_NO_SDK:-1}" = "0" ]; then
+  unset VITURE_NO_SDK
+else
+  export VITURE_NO_SDK=1
+fi
+
+echo "monado-service: VITURE_NO_SDK=${VITURE_NO_SDK:-<unset: vendor path>} compute=${XRT_COMPOSITOR_COMPUTE}" >&2
+exec "$SERVICE" "$@"

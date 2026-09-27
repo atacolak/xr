@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Launch an OpenXR application against the freshly built Monado runtime.
 #
-#   scripts/run-hello-xr [path-to-binary]
+#   scripts/run-hello-xr [hello_xr arguments...]
 #
-# Defaults to the OpenXR-SDK hello_xr if it has been built next to this tree.
+# The application is chosen by VITURE_XR_APP, then HELLO_XR, then a search
+# under OPENXR_SDK_DIR; every argument is passed through to it.
 #
 # Composition on this host defaults to the *compute* compositor (Monado picks
 # that for non-Android when no display target is requested), so this can run
@@ -12,26 +13,70 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MONADO="${MONADO_DIR:-$HOME/workspace/monado}"
 SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+OPENXR_SDK="${OPENXR_SDK_DIR:-$HOME/workspace/openxr-sdk}"
 BUILD="$MONADO/build"
 
-BIN="${1:-${HELLO_XR:-$HOME/workspace/openxr-sdk/build/hello_xr/hello_xr}}"
-[ -x "$BIN" ] || { echo "hello_xr not found at $BIN (set HELLO_XR or pass a path)"; exit 1; }
+# VITURE_XR_HOLD=<seconds> keeps stdin open so the app runs its frame loop
+# instead of exiting immediately on EOF. That is how M1 was measured.
+HOLD="${VITURE_XR_HOLD:-0}"
+
+BIN="${VITURE_XR_APP:-${HELLO_XR:-}}"
+if [ -z "$BIN" ]; then
+  for c in "$OPENXR_SDK/build/src/tests/hello_xr/hello_xr" \
+           "$OPENXR_SDK/build/hello_xr/hello_xr" \
+           "$OPENXR_SDK/build/tests/hello_xr/hello_xr"; do
+    [ -x "$c" ] && { BIN="$c"; break; }
+  done
+fi
+[ -n "$BIN" ] && [ -x "$BIN" ] || {
+  echo "hello_xr not found (looked under $OPENXR_SDK/build)." >&2
+  echo "Set VITURE_XR_APP or HELLO_XR to the binary, or OPENXR_SDK_DIR" >&2
+  echo "to the OpenXR-SDK root." >&2
+  exit 1
+}
 
 RUNTIME_JSON="$(find "$BUILD" -maxdepth 4 -name 'openxr_monado*.json' | head -1)"
 [ -n "$RUNTIME_JSON" ] || { echo "no monado runtime json in $BUILD"; exit 1; }
 
+# Out-of-process runtime: the client talks to monado-service over a unix socket.
+# (An in-process build has no such dependency and needs no service.)
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/monado_comp_ipc"
+if ! grep -q 'inprocess' "$RUNTIME_JSON" && [ ! -S "$SOCK" ]; then
+  cat >&2 <<EOF
+monado-service is not listening ($SOCK missing).
+
+This build is an out-of-process runtime, so the service must be running first:
+
+  cd $MONADO
+  VITURE_NO_SDK=1 XRT_COMPOSITOR_COMPUTE=1 \\
+    ./build/src/xrt/targets/service/monado-service
+
+If a previous instance was killed rather than shut down, remove the stale
+socket first:  rm -f $SOCK
+EOF
+  exit 1
+fi
+
 # The vendor SDK loads libcarina_vio from its own directory and that library
 # needs its sibling OpenCV/usb shared objects.
-export LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+LD_PATHS="$SDK/x86_64"
+LOADER="$(find "$OPENXR_SDK/build" -maxdepth 5 -name 'libopenxr_loader.so' 2>/dev/null | head -1)"
+[ -n "$LOADER" ] && LD_PATHS="$(dirname "$LOADER"):$LD_PATHS"
+export LD_LIBRARY_PATH="$LD_PATHS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export XR_RUNTIME_JSON="$RUNTIME_JSON"
 export VITURE_LOG="${VITURE_LOG:-info}"
 export XRT_COMPOSITOR_LOG="${XRT_COMPOSITOR_LOG:-info}"
 
+echo "app=$BIN"
 echo "XR_RUNTIME_JSON=$XR_RUNTIME_JSON"
 echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 if ! lsusb 2>/dev/null | grep -qi '35ca'; then
   echo "NOTE: no VITURE device on USB right now."
-  echo "      Add VITURE_NO_SDK=1 to validate enumeration with a static HMD."
+  echo "      Set VITURE_NO_SDK=1 for the service to validate enumeration with a static HMD."
 fi
 
+if [ "$HOLD" != "0" ]; then
+  echo "holding stdin open for ${HOLD}s so the frame loop runs"
+  exec bash -c 'sleep "$1" | exec "$2" "${@:3}"' _ "$HOLD" "$BIN" "$@"
+fi
 exec "$BIN" "$@"

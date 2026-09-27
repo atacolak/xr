@@ -52,9 +52,22 @@ scripts/build                     # patch Monado, configure, build
 scripts/patch-monado.sh status    # is the patch applied? against which base?
 tools/build-pose-dump.sh          # characterise the pose stream, no Monado needed
 tools/viture-pose-dump --seconds 10 --json
+scripts/run-service               # start monado-service (clears a stale IPC socket)
 scripts/run-hello-xr              # run hello_xr against the built runtime
 scripts/run-beamng                # gated until M0-M3 are measured
-tools/restore-desktop save        # ALWAYS do this before touching displays
+scripts/restore-display save      # ALWAYS do this before touching displays
+```
+
+`scripts/run-service` defaults to the no-hardware static HMD
+(`VITURE_NO_SDK=1`); use `VITURE_NO_SDK=0 scripts/run-service` for the real
+vendor path once the glasses are attached. `scripts/run-hello-xr` takes the
+*application's* arguments, not a path -- pick the binary with `VITURE_XR_APP` or
+`HELLO_XR`, and set `VITURE_XR_HOLD=<seconds>` to keep stdin open so the app
+runs its frame loop instead of exiting on EOF:
+
+```sh
+scripts/run-service &                            # or a supervised pty
+VITURE_XR_HOLD=15 scripts/run-hello-xr -g Vulkan --space Local
 ```
 
 ## Operational gotcha: stale IPC socket
@@ -69,6 +82,9 @@ rm -f /run/user/1000/monado_comp_ipc
 
 Also note the service must run with a real PTY: it registers stdin in `epoll`,
 so a redirected/closed stdin makes it die with `epoll_ctl(stdin) failed`.
+
+`scripts/run-service` handles both cases: it refuses to start a second instance,
+removes a socket no live process owns, and warns when stdin is not a terminal.
 
 A build against the default settings produces an *out-of-process* runtime
 (`libopenxr_monado.so` talks to `monado-service` over that socket), so the

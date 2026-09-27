@@ -25,8 +25,9 @@ BeamNG's native Linux OpenXR mode needs, in order:
   M2  those frames reach the glasses in stereo SBS
   M3  Carina rotation drives the head pose
 
-Only M0/M1 are expected to be validated so far. Track state in
-docs/measurements.md, then re-run, or set VITURE_XR_ALLOW_EARLY=1 to force.
+Only M0/M1 are validated so far (measured, no glasses needed). M2/M3 need the
+glasses attached. Track state in docs/measurements.md, then re-run, or set
+VITURE_XR_ALLOW_EARLY=1 to force.
 EOF
   exit 2
 fi
