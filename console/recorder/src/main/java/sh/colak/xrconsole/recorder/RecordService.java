@@ -28,6 +28,8 @@ public final class RecordService extends Service implements RecState.Listener {
     private final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
 
     static void start(Context ctx, long segmentMs, long durationMs) {
+        RgbPreview.releaseCamera();
+        RecState.I.setPhase(RecState.Phase.STARTING);
         Intent i = new Intent(ctx, RecordService.class);
         i.setAction(ACTION_START);
         i.putExtra(EXTRA_SEGMENT_MS, segmentMs);

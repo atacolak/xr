@@ -22,14 +22,25 @@ Stereo tracking cameras, pose, IMU, ASR, GPS, and annotation are out of
 scope. Timestamps use one monotonic origin (`elapsedRealtimeNanos`) so
 those streams can be added later without rewriting the architecture.
 
-Do not load VITURE native code until a recording actually starts. The UI
-must come up even if the glasses path fails.
+The UI comes up even if the glasses path fails. Native camera code loads when
+the foreground 16:9 preview starts, or when recording starts if preview is not
+running.
 
 ## Operation
 
-Idle: glasses/RGB presence, **RECORD** (dimmed until an RGB camera is
-connected), microphone selector. Recording: **● REC**, elapsed time,
-RGB format, requested and actual mic, remaining storage, **STOP**.
+Idle: 16:9 RGB viewer (foreground only), glasses/RGB presence, **RECORD**
+(dimmed until an RGB camera is connected), microphone selector. Recording:
+**● REC**, elapsed time, RGB format, requested and actual mic, remaining
+storage, **STOP**.
+
+The 16:9 viewer shows the live front RGB stream only while the activity is
+resumed. Backgrounding stops the preview camera immediately; an in-progress
+recording keeps encoding without updating the view.
+
+The VITURE camera SDK exposes a single stream: MJPEG 1920×1080@30. There is
+no API to select another resolution or framerate. On open, the recorder also
+parses USB Video Class frame descriptors and records whatever the hardware
+advertises under `camera_modes` in `session.json`.
 
 The app does not register as a USB default handler. Connecting glasses
 does not open a “choose an app for this USB device” prompt. Presence is
@@ -74,9 +85,10 @@ encoder running and starts the next MP4 on a keyframe.
 
 Runtime (grant once): `CAMERA`, `RECORD_AUDIO`, `POST_NOTIFICATIONS`.
 
-USB: permission is requested when recording starts, not by registering as a
-USB default app. Already-attached glasses are claimed from the live device
-list; do not replug just because an attach callback was missed.
+USB: permission is requested when the foreground preview or a recording
+opens the RGB camera, not by registering as a USB default app. Already-attached
+glasses are claimed from the live device list; do not replug just because an
+attach callback was missed.
 
 ## Codec / bitrate
 
@@ -93,6 +105,9 @@ measured bitrate / MB-min / GB-hour / fps. `events.jsonl` records route changes.
 Measured on the Fold with attached Luma Ultra, 2026-09-29:
 
 - front RGB: MJPEG 1920×1080, hardware HEVC, 29.04–29.12 measured fps
+- USB Video Class descriptors advertise MJPEG up to 1920×1080@30 and many
+  smaller modes (1280×1024 down to 160×120, 5–30 fps). YUY2 at 1080p is 5 fps.
+  Nothing above 1080p or 30 fps. The SDK still streams only 1920×1080@30 MJPEG.
 - 35.3-second auto-route run: 1,020 frames in, 1,018 encoded, 1 dropped
 - measured output: approximately 13.44 Mbps, 90.05 MB/min, 5.28 GB/hour
 - two reduced-duration rollover segments independently contain HEVC + AAC

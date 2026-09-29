@@ -84,6 +84,7 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
 
     synchronized void start(long segmentMs, long durationMs) throws Exception {
         if (running) return;
+        RgbPreview.releaseCamera();
         this.segmentMs = segmentMs > 0 ? segmentMs : DEFAULT_SEGMENT_MS;
         this.autoStopAtElapsed = durationMs > 0
                 ? SystemClock.elapsedRealtime() + durationMs : 0;
@@ -158,6 +159,9 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         try {
             camConn = connection;
             int fd = connection.getFileDescriptor();
+            UvcModes.Result modes = UvcModes.probe(device, connection);
+            st.cameraModes = modes.summary();
+            store.put("camera_modes", modes.json());
             if (!NativeRgbCamera.nativeIsValidCamera(device.getVendorId(), device.getProductId())) {
                 fail("SDK rejected camera USB " + UsbHost.describe(device));
                 return;
@@ -204,6 +208,7 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         f.arrivalNs = SystemClock.elapsedRealtimeNanos();
         lastFrameElapsed = SystemClock.elapsedRealtime();
         framesIn++;
+        RgbPreview.offerJpeg(jpeg, width, height);
         if (!q.offer(f)) {
             dropped++;
             st.dropped = dropped;
@@ -606,7 +611,9 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         st.cameraPresent = presence.camera != null;
         if (presence.camera != null) {
             st.glassesStatus = "GLASSES connected  RGB " + UsbHost.describe(presence.camera);
-            if (st.phase == RecState.Phase.IDLE) st.rgbInfo = "RGB ready";
+            if (st.phase == RecState.Phase.IDLE) {
+                st.rgbInfo = st.cameraModes.isEmpty() ? "RGB ready" : ("RGB " + st.cameraModes);
+            }
         } else if (presence.glasses != null) {
             st.glassesStatus = "GLASSES connected  RGB missing";
             if (st.phase == RecState.Phase.IDLE) st.rgbInfo = "RGB —";

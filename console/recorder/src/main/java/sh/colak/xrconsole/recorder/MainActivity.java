@@ -18,6 +18,7 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
 import android.widget.TextView;
@@ -27,6 +28,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
     private TextView rec, timer, glasses, rgb, mic, storage, err;
     private Spinner micSelector;
+    private ImageView preview;
     private Button btn;
     private AudioDeviceMonitor audioMonitor;
     private GlassesMonitor glassesMonitor;
@@ -44,6 +46,9 @@ public final class MainActivity extends Activity implements RecState.Listener {
         int pad = dp(28);
         root.setPadding(pad, pad, pad, pad);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        preview = RgbPreview.createView(this);
+        root.addView(preview);
 
         rec = tv(42, 0xFFE11D48);
         rec.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
@@ -251,7 +256,24 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
     };
 
-    @Override public void onRecState() { h.post(this::render); }
+    @Override public void onRecState() {
+        h.post(() -> {
+            RgbPreview.sync(this);
+            render();
+        });
+    }
+
+    @Override protected void onResume() {
+        super.onResume();
+        refreshPresence();
+        RgbPreview.attach(this, preview);
+        render();
+    }
+
+    @Override protected void onPause() {
+        RgbPreview.detach();
+        super.onPause();
+    }
 
     private void refreshPresence() {
         RecordEngine.applyPresence(new UsbHost(this, unusedUsb).presence());
@@ -284,6 +306,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
         @Override public void onReceive(Context context, Intent intent) {
             refreshPresence();
+            RgbPreview.sync(MainActivity.this);
             render();
         }
     }
@@ -297,7 +320,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         timer.setText(RecordService.formatDur(st.elapsedMs()));
         glasses.setText(st.glassesStatus);
         glasses.setTextColor(ready ? 0xFF86EFAC : 0xFFF87171);
-        rgb.setText(st.rgbInfo);
+        rgb.setText(st.cameraModes.isEmpty() ? st.rgbInfo : ("RGB " + st.cameraModes));
         mic.setText("MIC selected: " + st.micSelection + "\nactual: " + st.micRoute);
         micSelector.setEnabled(st.phase == RecState.Phase.IDLE || st.phase == RecState.Phase.ERROR);
         long mb = st.storageFreeBytes / (1024 * 1024);
@@ -333,6 +356,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
     @Override protected void onDestroy() {
         RecState.I.remove(this);
+        RgbPreview.detach();
         if (audioMonitor != null) audioMonitor.stop();
         if (glassesMonitor != null) glassesMonitor.stop();
         h.removeCallbacks(tick);

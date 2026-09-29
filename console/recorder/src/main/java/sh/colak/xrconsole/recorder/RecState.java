@@ -30,6 +30,7 @@ final class RecState {
     volatile boolean glassesPresent;
     volatile boolean cameraPresent;
     volatile String glassesStatus = "GLASSES —";
+    volatile String cameraModes = "";
 
     void add(Listener l) { listeners.add(l); }
     void remove(Listener l) { listeners.remove(l); }
