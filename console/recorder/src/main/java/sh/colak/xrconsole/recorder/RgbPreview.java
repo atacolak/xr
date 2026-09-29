@@ -10,9 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
-import android.view.Gravity;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
 
 final class RgbPreview implements NativeRgbCamera.Listener, UsbHost.Listener {
     static final String TAG = "XRRecorder";
@@ -35,24 +33,33 @@ final class RgbPreview implements NativeRgbCamera.Listener, UsbHost.Listener {
     static ImageView createView(Context ctx) {
         ImageView v = new ImageView(ctx) {
             @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                int width = MeasureSpec.getSize(widthMeasureSpec);
-                int maxH = Math.round(216 * getResources().getDisplayMetrics().density);
-                int height = width * 9 / 16;
-                if (height > maxH && maxH > 0) {
-                    height = maxH;
-                    width = height * 16 / 9;
+                int maxW = MeasureSpec.getSize(widthMeasureSpec);
+                int maxH = MeasureSpec.getSize(heightMeasureSpec);
+                if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                    maxW = Integer.MAX_VALUE / 4;
                 }
-                setMeasuredDimension(width, height);
+                if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) {
+                    maxH = Integer.MAX_VALUE / 4;
+                }
+                if (maxW < 16) maxW = 16;
+                if (maxH < 9) maxH = 9;
+                int w;
+                int h;
+                if ((long) maxW * 9 <= (long) maxH * 16) {
+                    w = maxW;
+                    h = w * 9 / 16;
+                } else {
+                    h = maxH;
+                    w = h * 16 / 9;
+                }
+                if (w < 1) w = 1;
+                if (h < 1) h = 1;
+                setMeasuredDimension(w, h);
             }
         };
         v.setBackgroundColor(0xFF111111);
         v.setScaleType(ImageView.ScaleType.CENTER_CROP);
         v.setAdjustViewBounds(false);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.gravity = Gravity.CENTER_HORIZONTAL;
-        lp.bottomMargin = Math.round(12 * ctx.getResources().getDisplayMetrics().density);
-        v.setLayoutParams(lp);
         v.setContentDescription("RGB camera");
         return v;
     }

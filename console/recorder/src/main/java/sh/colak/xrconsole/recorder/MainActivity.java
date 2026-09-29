@@ -2,13 +2,16 @@ package sh.colak.xrconsole.recorder;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Dialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,8 +19,12 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.Spinner;
@@ -26,10 +33,11 @@ import android.widget.TextView;
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
     static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
-    private TextView rec, timer, glasses, rgb, mic, storage, err;
-    private Spinner micSelector;
+    private TextView rec, timer, err;
+    private ImageButton glassesBtn, gearBtn;
     private ImageView preview;
     private Button btn;
+    private Dialog settings;
     private AudioDeviceMonitor audioMonitor;
     private GlassesMonitor glassesMonitor;
     private final Handler h = new Handler(Looper.getMainLooper());
@@ -43,46 +51,67 @@ public final class MainActivity extends Activity implements RecState.Listener {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(Color.BLACK);
-        int pad = dp(28);
+        int pad = dp(16);
         root.setPadding(pad, pad, pad, pad);
-        root.setGravity(Gravity.CENTER_HORIZONTAL);
 
+        FrameLayout previewSlot = new FrameLayout(this);
+        LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        previewSlot.setLayoutParams(slotLp);
         preview = RgbPreview.createView(this);
-        root.addView(preview);
+        FrameLayout.LayoutParams previewLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        previewLp.gravity = Gravity.CENTER;
+        preview.setLayoutParams(previewLp);
+        previewSlot.addView(preview);
+        root.addView(previewSlot);
 
-        rec = tv(42, 0xFFE11D48);
+        LinearLayout chrome = new LinearLayout(this);
+        chrome.setOrientation(LinearLayout.HORIZONTAL);
+        chrome.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams chromeLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
+        chromeLp.topMargin = dp(8);
+        chrome.setLayoutParams(chromeLp);
+
+        glassesBtn = iconButton(R.drawable.ic_glasses);
+        glassesBtn.setContentDescription("Glasses");
+        glassesBtn.setClickable(false);
+        glassesBtn.setFocusable(false);
+
+        timer = new TextView(this);
+        timer.setTextColor(Color.WHITE);
+        timer.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        timer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        timer.setGravity(Gravity.CENTER);
+        timer.setText("00:00:00");
+        LinearLayout.LayoutParams timerLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        timer.setLayoutParams(timerLp);
+
+        gearBtn = iconButton(R.drawable.ic_gear);
+        gearBtn.setContentDescription("Settings");
+        gearBtn.setOnClickListener(v -> showSettings());
+
+        chrome.addView(glassesBtn);
+        chrome.addView(timer);
+        chrome.addView(gearBtn);
+        root.addView(chrome);
+
+        rec = tv(18, 0xFFE11D48);
         rec.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        rec.setText("RECORD");
+        rec.setVisibility(View.GONE);
         root.addView(rec);
 
-        timer = tv(36, Color.WHITE);
-        timer.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        timer.setText("00:00:00");
-        root.addView(timer);
-
-        glasses = tv(18, 0xFFDDDDDD);
-        rgb = tv(18, 0xFFDDDDDD);
-        mic = tv(18, 0xFFDDDDDD);
-        TextView micLabel = tv(14, 0xFFAAAAAA);
-        micLabel.setText("MIC");
-        micSelector = new Spinner(this);
-        micSelector.setMinimumHeight(dp(56));
-        storage = tv(18, 0xFFDDDDDD);
-        err = tv(16, 0xFFFF6666);
-        root.addView(glasses);
-        root.addView(rgb);
-        root.addView(micLabel);
-        root.addView(micSelector);
-        root.addView(mic);
-        root.addView(storage);
+        err = tv(15, 0xFFFF6666);
+        err.setPadding(0, dp(4), 0, dp(4));
         root.addView(err);
 
         btn = new Button(this);
         btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, dp(64));
-        lp.topMargin = dp(24);
-        btn.setLayoutParams(lp);
+        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
+        btnLp.topMargin = dp(8);
+        btn.setLayoutParams(btnLp);
         btn.setOnClickListener(v -> onToggle());
         root.addView(btn);
 
@@ -90,7 +119,6 @@ public final class MainActivity extends Activity implements RecState.Listener {
         RecState.I.add(this);
         audioMonitor = new AudioDeviceMonitor();
         glassesMonitor = new GlassesMonitor();
-        refreshMicrophones();
         refreshPresence();
         audioMonitor.start();
         glassesMonitor.start();
@@ -120,7 +148,6 @@ public final class MainActivity extends Activity implements RecState.Listener {
                     MicrophoneDevices.Choice choice =
                             MicrophoneDevices.selectForSmoke(this, micProduct, micType);
                     RecState.I.micSelection = choice.label;
-                    refreshMicrophones();
                 } catch (Exception e) {
                     RecState.I.fail(e.getMessage());
                     return;
@@ -191,9 +218,38 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
     }
 
-    private void refreshMicrophones() {
+    private void showSettings() {
+        if (settings != null && settings.isShowing()) {
+            settings.dismiss();
+            return;
+        }
         java.util.List<MicrophoneDevices.Choice> choices = MicrophoneDevices.enumerate(this);
         MicrophoneDevices.Choice selected = MicrophoneDevices.selected(this, choices);
+        RecState.I.micSelection = selected.label;
+
+        Dialog d = new Dialog(this);
+        d.setCanceledOnTouchOutside(true);
+        if (d.getWindow() != null) {
+            d.getWindow().setBackgroundDrawable(new ColorDrawable(0xFF161616));
+        }
+
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(20);
+        body.setPadding(pad, pad, pad, pad);
+        body.setMinimumWidth(dp(280));
+
+        TextView title = tv(14, 0xFFAAAAAA);
+        title.setText("DEVICES");
+        title.setGravity(Gravity.START);
+        body.addView(title);
+
+        TextView micLabel = tv(13, 0xFF888888);
+        micLabel.setText("Microphone");
+        micLabel.setGravity(Gravity.START);
+        micLabel.setPadding(0, dp(12), 0, dp(4));
+        body.addView(micLabel);
+
         java.util.ArrayList<String> labels = new java.util.ArrayList<>();
         int selectedIndex = -1;
         for (int i = 0; i < choices.size(); i++) {
@@ -205,23 +261,53 @@ public final class MainActivity extends Activity implements RecState.Listener {
             labels.add(selected.label);
             selectedIndex = choices.size() - 1;
         }
+        Spinner spinner = new Spinner(this);
+        spinner.setMinimumHeight(dp(48));
         ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_spinner_dropdown_item, labels);
-        micSelector.setAdapter(adapter);
-        micSelector.setSelection(selectedIndex, false);
-        micSelector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+                android.R.layout.simple_spinner_item, labels) {
+            @Override public View getView(int position, View convertView, ViewGroup parent) {
+                TextView t = (TextView) super.getView(position, convertView, parent);
+                t.setTextColor(Color.WHITE);
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+                t.setPadding(dp(4), dp(8), dp(4), dp(8));
+                return t;
+            }
+            @Override public View getDropDownView(int position, View convertView, ViewGroup parent) {
+                TextView t = (TextView) super.getDropDownView(position, convertView, parent);
+                t.setTextColor(Color.WHITE);
+                t.setBackgroundColor(0xFF222222);
+                t.setPadding(dp(16), dp(12), dp(16), dp(12));
+                return t;
+            }
+        };
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        spinner.setAdapter(adapter);
+        spinner.setSelection(selectedIndex, false);
+        boolean idle = RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR;
+        spinner.setEnabled(idle);
+        spinner.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
             @Override public void onItemSelected(android.widget.AdapterView<?> parent,
                                                   android.view.View view, int position, long id) {
                 if (position < choices.size()) {
                     MicrophoneDevices.Choice choice = choices.get(position);
                     MicrophoneDevices.persist(MainActivity.this, choice);
                     RecState.I.micSelection = choice.label;
-                    render();
                 }
             }
             @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
         });
-        RecState.I.micSelection = selected.label;
+        body.addView(spinner);
+
+        RecState st = RecState.I;
+        TextView glasses = tv(14, st.cameraPresent ? 0xFF86EFAC : 0xFFF87171);
+        glasses.setGravity(Gravity.START);
+        glasses.setText(st.cameraPresent ? "Glasses RGB ready" : "Glasses RGB missing");
+        glasses.setPadding(0, dp(16), 0, 0);
+        body.addView(glasses);
+
+        d.setContentView(body);
+        settings = d;
+        d.show();
     }
 
     private final class AudioDeviceMonitor extends android.media.AudioDeviceCallback {
@@ -238,13 +324,15 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
         @Override public void onAudioDevicesAdded(android.media.AudioDeviceInfo[] added) {
             if (RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR) {
-                refreshMicrophones();
+                RecState.I.micSelection = MicrophoneDevices.selected(
+                        MainActivity.this, MicrophoneDevices.enumerate(MainActivity.this)).label;
             }
         }
 
         @Override public void onAudioDevicesRemoved(android.media.AudioDeviceInfo[] removed) {
             if (RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR) {
-                refreshMicrophones();
+                RecState.I.micSelection = MicrophoneDevices.selected(
+                        MainActivity.this, MicrophoneDevices.enumerate(MainActivity.this)).label;
             }
         }
     }
@@ -271,6 +359,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     }
 
     @Override protected void onPause() {
+        if (settings != null && settings.isShowing()) settings.dismiss();
         RgbPreview.detach();
         super.onPause();
     }
@@ -315,21 +404,31 @@ public final class MainActivity extends Activity implements RecState.Listener {
         RecState st = RecState.I;
         boolean recOn = st.phase == RecState.Phase.RECORDING;
         boolean ready = st.cameraPresent;
-        rec.setText(recOn ? "● REC" : (st.phase == RecState.Phase.ERROR ? "ERROR" : st.phase.name()));
-        rec.setTextColor(recOn || st.phase == RecState.Phase.ERROR ? 0xFFE11D48 : Color.WHITE);
         timer.setText(RecordService.formatDur(st.elapsedMs()));
-        glasses.setText(st.glassesStatus);
-        glasses.setTextColor(ready ? 0xFF86EFAC : 0xFFF87171);
-        rgb.setText(st.cameraModes.isEmpty() ? st.rgbInfo : ("RGB " + st.cameraModes));
-        mic.setText("MIC selected: " + st.micSelection + "\nactual: " + st.micRoute);
-        micSelector.setEnabled(st.phase == RecState.Phase.IDLE || st.phase == RecState.Phase.ERROR);
-        long mb = st.storageFreeBytes / (1024 * 1024);
-        storage.setText(st.storageFreeBytes > 0 ? ("STORAGE " + mb + " MB free") : "STORAGE —");
+        if (recOn) {
+            rec.setVisibility(View.VISIBLE);
+            rec.setText("● REC");
+            rec.setTextColor(0xFFE11D48);
+        } else if (st.phase == RecState.Phase.ERROR) {
+            rec.setVisibility(View.VISIBLE);
+            rec.setText("ERROR");
+            rec.setTextColor(0xFFE11D48);
+        } else if (st.phase == RecState.Phase.STARTING || st.phase == RecState.Phase.STOPPING) {
+            rec.setVisibility(View.VISIBLE);
+            rec.setText(st.phase.name());
+            rec.setTextColor(Color.WHITE);
+        } else {
+            rec.setVisibility(View.GONE);
+        }
+        glassesBtn.setImageTintList(ColorStateList.valueOf(ready ? 0xFF86EFAC : 0xFF555555));
+        glassesBtn.setAlpha(ready ? 1f : 0.5f);
+        glassesBtn.setContentDescription(ready ? "Glasses connected" : "Glasses disconnected");
         if (st.phase == RecState.Phase.IDLE && !ready) {
             err.setText("connect glasses to record");
         } else {
             err.setText(st.error != null ? st.error : "");
         }
+        err.setVisibility(err.getText().length() == 0 ? View.GONE : View.VISIBLE);
         if (recOn || st.phase == RecState.Phase.STARTING || st.phase == RecState.Phase.STOPPING) {
             btn.setText("STOP");
             btn.setEnabled(st.phase != RecState.Phase.STOPPING);
@@ -341,12 +440,23 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
     }
 
+    private ImageButton iconButton(int drawable) {
+        ImageButton b = new ImageButton(this);
+        b.setImageResource(drawable);
+        b.setBackgroundColor(Color.TRANSPARENT);
+        b.setPadding(dp(8), dp(8), dp(8), dp(8));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        b.setLayoutParams(lp);
+        b.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
+        b.setImageTintList(ColorStateList.valueOf(0xFFDDDDDD));
+        return b;
+    }
+
     private TextView tv(int sp, int color) {
         TextView t = new TextView(this);
         t.setTextColor(color);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
         t.setGravity(Gravity.CENTER);
-        t.setPadding(0, dp(6), 0, dp(6));
         return t;
     }
 
@@ -356,6 +466,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
     @Override protected void onDestroy() {
         RecState.I.remove(this);
+        if (settings != null && settings.isShowing()) settings.dismiss();
         RgbPreview.detach();
         if (audioMonitor != null) audioMonitor.stop();
         if (glassesMonitor != null) glassesMonitor.stop();
