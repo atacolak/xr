@@ -20,6 +20,7 @@ import android.widget.TextView;
 
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
+    static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
     private TextView rec, timer, rgb, mic, storage, err;
     private Spinner micSelector;
     private Button btn;
@@ -83,8 +84,18 @@ public final class MainActivity extends Activity implements RecState.Listener {
         h.post(tick);
     }
 
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
     private void handleIntent(Intent intent) {
         if (intent == null) return;
+        if (ACTION_STOP.equals(intent.getAction())) {
+            RecordService.stop(this);
+            return;
+        }
         if (ACTION_SMOKE.equals(intent.getAction()) || intent.getBooleanExtra("auto_record", false)) {
             smoke = true;
             String micProduct = intent.getStringExtra("mic_product");
@@ -112,7 +123,10 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
     private void onToggle() {
         RecState.Phase p = RecState.I.phase;
-        if (p == RecState.Phase.RECORDING || p == RecState.Phase.STARTING) {
+        if (p == RecState.Phase.RECORDING || p == RecState.Phase.STARTING
+                || p == RecState.Phase.STOPPING) {
+            btn.setEnabled(false);
+            btn.setText("STOPPING…");
             RecordService.stop(this);
         } else {
             tryStart(RecordEngine.DEFAULT_SEGMENT_MS, 0);
@@ -240,6 +254,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         } else {
             btn.setText("RECORD");
         }
+        btn.setEnabled(st.phase != RecState.Phase.STOPPING);
     }
 
     private TextView tv(int sp, int color) {

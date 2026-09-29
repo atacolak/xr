@@ -52,9 +52,7 @@ final class RecState {
     }
 
     long elapsedMs() {
-        if (phase != Phase.RECORDING && phase != Phase.STOPPING) {
-            if (startedElapsedMs == 0) return 0;
-        }
+        if (phase != Phase.RECORDING && phase != Phase.STOPPING) return 0;
         if (startedElapsedMs == 0) return 0;
         return android.os.SystemClock.elapsedRealtime() - startedElapsedMs;
     }

@@ -1,8 +1,11 @@
 package sh.colak.xrconsole.recorder;
 
+import android.content.ContentValues;
 import android.content.Context;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.os.StatFs;
 import android.util.Log;
 
@@ -11,6 +14,8 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
@@ -37,9 +42,8 @@ final class SessionStore {
         if (!mkdirs(fallbackDir)) {
             throw new IllegalStateException("app-specific recording path unavailable: " + fallbackDir);
         }
-        // Direct File I/O to public Movies is blocked by scoped storage on
-        // current Android. A MediaStore-backed public export can be added
-        // separately; recording truth stays in the writable app-specific path.
+        // Capture into app-specific storage so an interrupted segment remains
+        // recoverable. Finalized segments are copied to MediaStore for Gallery.
         this.dir = chosen;
         try {
             events = new OutputStreamWriter(new FileOutputStream(new File(dir, "events.jsonl"), true),
@@ -86,6 +90,35 @@ final class SessionStore {
         SimpleDateFormat f = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US);
         String name = f.format(new Date(startMs)) + String.format(Locale.US, "_%03d.mp4", index);
         return new File(dir, name);
+    }
+
+    Uri publishVideo(Context ctx, File source) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Video.Media.DISPLAY_NAME, source.getName());
+        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
+        values.put(MediaStore.Video.Media.RELATIVE_PATH,
+                Environment.DIRECTORY_MOVIES + "/XRConsole/Recorder");
+        values.put(MediaStore.Video.Media.IS_PENDING, 1);
+        Uri uri = ctx.getContentResolver().insert(
+                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IllegalStateException("MediaStore insert failed");
+        boolean complete = false;
+        try (FileInputStream in = new FileInputStream(source);
+             OutputStream out = ctx.getContentResolver().openOutputStream(uri, "w")) {
+            if (out == null) throw new IllegalStateException("MediaStore output unavailable");
+            byte[] buffer = new byte[256 * 1024];
+            int count;
+            while ((count = in.read(buffer)) >= 0) {
+                if (count > 0) out.write(buffer, 0, count);
+            }
+            complete = true;
+        } finally {
+            if (!complete) ctx.getContentResolver().delete(uri, null, null);
+        }
+        values.clear();
+        values.put(MediaStore.Video.Media.IS_PENDING, 0);
+        ctx.getContentResolver().update(uri, values, null, null);
+        return uri;
     }
 
     void put(String key, Object value) {

@@ -409,10 +409,18 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
             seg.put("monotonic_start_ns", segmentStartMonoNs);
             seg.put("monotonic_end_ns", SystemClock.elapsedRealtimeNanos());
             seg.put("close_reason", reason);
-            if (f != null && f.exists()) seg.put("bytes_on_disk", f.length());
+            if (f != null && f.exists()) {
+                seg.put("bytes_on_disk", f.length());
+                android.net.Uri galleryUri = store.publishVideo(ctx, f);
+                seg.put("gallery_uri", galleryUri.toString());
+                store.event("segment_published", new JSONObject()
+                        .put("index", segmentIndex)
+                        .put("uri", galleryUri.toString()));
+            }
             store.addSegment(seg);
         } catch (Exception e) {
-            Log.w(TAG, "segment meta", e);
+            Log.e(TAG, "segment publish", e);
+            fail("Gallery publish: " + e.getMessage());
         }
         segmentIndex++;
     }
