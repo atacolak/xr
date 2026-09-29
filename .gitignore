@@ -31,3 +31,7 @@ local.properties
 
 # NDK cmake intermediates
 **/.cxx/
+
+# beads: sqlite is the mutation truth; the jsonl is a local mirror only
+# (same policy as voicecat and speech-core)
+/.beads/issues.jsonl
