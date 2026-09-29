@@ -23,6 +23,7 @@ the iteration loop.
 ## Commands
 
 ```sh
+scripts/repo-sanity
 scripts/xrctl device status
 scripts/xrctl adb ensure
 scripts/xrctl deploy path/to/app-debug.apk --package com.example
@@ -33,6 +34,9 @@ scripts/xrctl display
 scripts/xrctl pull /sdcard/... ./local
 scripts/xrctl cursor status    # read-only pointer settings
 ```
+
+`scripts/repo-sanity` is local-tree hygiene. Run it before merge readiness.
+It does not replace `xrctl` device checks.
 
 Recorder V1 (`console/recorder`, package `sh.colak.xrconsole.recorder`) uses
 the same harness. `console/recorder/smoke.sh` builds, `xrctl deploy`s, auto-

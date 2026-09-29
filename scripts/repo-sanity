@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Fail loudly on repo-root hygiene problems that git status can miss.
+
+Scans the working tree NUL-safely. Distinguishes:
+  - always-fatal: control characters / captured command-help names / escaping
+    symlinks in the working tree (even if untracked)
+  - tracked-fatal: Android build products, APKs, proprietary SDK bits that
+    should never be in git
+Ignored local build caches (.gradle, .cxx, build/, local.properties, APKs)
+are allowed as untracked files.
+"""
+from __future__ import annotations
+
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SKIP_DIRS = {".git"}
+
+HELP_PREFIXES = ("Usage: ", "usage: ")
+TRACKED_FORBIDDEN_SUFFIXES = (
+    ".apk",
+    ".apk.idsig",
+    ".aab",
+    ".aar",
+    ".so",
+    ".keystore",
+    ".jks",
+)
+TRACKED_FORBIDDEN_NAMES = {
+    "local.properties",
+}
+TRACKED_FORBIDDEN_DIR_PARTS = {
+    ".gradle",
+    ".cxx",
+    "build",
+    "jniLibs",
+    "SDK",
+}
+
+def git_ls_files() -> list[str]:
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+    )
+    return [p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p]
+
+def has_control(name: str) -> bool:
+    return any(ord(c) < 32 for c in name)
+
+
+def component_problems(rel: str) -> list[str]:
+    out = []
+    parts = Path(rel).parts
+    for part in parts:
+        if has_control(part):
+            out.append(f"control character in component {part!r}")
+        if part != part.strip():
+            out.append(f"leading/trailing whitespace in component {part!r}")
+        if part.startswith(HELP_PREFIXES) or part.startswith("Usage:"):
+            out.append(f"command-help pathname {part!r}")
+    return out
+
+
+def symlink_target_escapes(link: Path) -> str | None:
+    tgt = os.readlink(link)
+    if not tgt:
+        return "empty symlink target"
+    if os.path.isabs(tgt):
+        resolved = Path(tgt)
+        try:
+            resolved.relative_to(ROOT)
+        except ValueError:
+            return f"absolute symlink escapes repo -> {tgt!r}"
+        return None
+    # relative: resolve against the link's parent without following the link
+    candidate = (link.parent / tgt).resolve()
+    try:
+        candidate.relative_to(ROOT)
+    except ValueError:
+        return f"relative symlink escapes repo -> {tgt!r}"
+    return None
+
+
+def tracked_forbidden(rel: str) -> str | None:
+    name = Path(rel).name
+    if name in TRACKED_FORBIDDEN_NAMES:
+        return f"tracked forbidden name {name}"
+    lower = rel.lower()
+    for suf in TRACKED_FORBIDDEN_SUFFIXES:
+        if lower.endswith(suf):
+            return f"tracked forbidden suffix {suf}"
+    parts = Path(rel).parts
+    ancestors = parts[:-1]
+    for d in TRACKED_FORBIDDEN_DIR_PARTS:
+        if d in ancestors:
+            return f"tracked forbidden directory {d}/"
+    if "/SDK/" in f"/{rel}/" or rel.endswith("/SDK"):
+        return "tracked forbidden directory SDK/"
+    return None
+
+
+def main() -> int:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    for dirpath, dirnames, filenames in os.walk(ROOT, topdown=True, followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        parent = Path(dirpath)
+        for name in list(dirnames) + list(filenames):
+            p = parent / name
+            rel = os.path.relpath(p, ROOT)
+            for problem in component_problems(rel):
+                errors.append(f"{rel}: {problem}")
+            try:
+                st = os.lstat(p)
+            except OSError as e:
+                errors.append(f"{rel}: lstat failed: {e}")
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                reason = symlink_target_escapes(p)
+                if reason:
+                    errors.append(f"{rel}: {reason}")
+
+    for rel in git_ls_files():
+        reason = tracked_forbidden(rel)
+        if reason:
+            errors.append(f"{rel}: {reason}")
+
+    if warnings:
+        for w in warnings:
+            print(f"warning: {w}", file=sys.stderr)
+    if errors:
+        print(f"repo-sanity: {len(errors)} problem(s)", file=sys.stderr)
+        for e in errors:
+            print(f"error: {e}", file=sys.stderr)
+        return 1
+    print("repo-sanity: ok")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

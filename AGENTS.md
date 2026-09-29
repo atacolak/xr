@@ -7,6 +7,10 @@ UxSpace is a preserved experiment (`experiments/uxspace.md`).
 `scripts/xrctl` is the machine-development channel to the Fold. Prefer it over
 ad-hoc SSH/ADB one-liners so transport assumptions stay in one place.
 
+Before declaring repo hygiene or merge readiness, run `scripts/repo-sanity`.
+It fails on control-character pathnames, captured command-help names,
+escaping symlinks, and tracked Android/SDK binaries.
+
 ---
 
 ## XR DEVICE / DEVELOPMENT INVARIANTS

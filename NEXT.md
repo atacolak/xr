@@ -2,9 +2,12 @@
 
 Ordered exploration after UxSpace bring-up was preserved.
 
-## NEXT FRONTIER
+**Current work:** Luma / Linux display + tracking — `experiments/monado-viture/`.
+**Next frontier after that:** Stardust XR — `experiments/stardust.md`.
 
-1. Stardust XR
+## Order
+
+1. Stardust XR *(next frontier after current)*
    - Telescope
    - Flatland
    - Protostar / Hexagon
@@ -22,7 +25,7 @@ Ordered exploration after UxSpace bring-up was preserved.
    - workspace-controller architecture
    - external control ideas
 
-4. Luma / Linux display + tracking path     <-- ACTIVE, see experiments/monado-viture/
+4. Luma / Linux display + tracking path     <-- CURRENT, `experiments/monado-viture/`
    - determine the cleanest path for Luma Ultra rendering/tracking into the Linux XR stack
    - evaluate existing Luma/Linux/OpenXR work before implementing our own
    - outcome of that evaluation: no Monado driver for VITURE exists anywhere, so we
@@ -47,4 +50,3 @@ Ordered exploration after UxSpace bring-up was preserved.
    - persistent spatial environments
 
 Notes live under `experiments/` and `docs/spatial-agent.md`.
-The next *active* frontier is Stardust XR: `experiments/stardust.md`.

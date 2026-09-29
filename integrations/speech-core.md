@@ -1,6 +1,6 @@
 # speech-core (external)
 
-https://github.com/atacolak/speech-core (`/home/sf/workspace/speech-core`).
+https://github.com/atacolak/speech-core (`~/workspace/speech-core`).
 
 ## What it provides to XR
 

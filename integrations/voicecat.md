@@ -1,6 +1,6 @@
 # Voicecat (external)
 
-https://github.com/atacolak/voicecat (`/home/sf/workspace/voicecat`).
+https://github.com/atacolak/voicecat (`~/workspace/voicecat`).
 
 ## What it provides to XR
 

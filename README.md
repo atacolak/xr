@@ -11,7 +11,7 @@ Hardware shape: glasses + phone + optional small physical input + power bank.
 VITURE Luma Ultra front RGB (measured **1080p / 2.07 MP**) and a selectable
 microphone. Package `sh.colak.xrconsole.recorder`.
 
-[![idle recorder UI on Fold DeX](console/recorder/docs/ui.png)](console/recorder/)
+[![live Luma Ultra RGB preview in XR field recorder on Fold DeX](console/recorder/docs/ui.png)](console/recorder/)
 
 Try it:
 
@@ -43,10 +43,11 @@ integration contracts. Independent components are listed in `components.toml`.
 - `fold-thinclient/` — existing Termux/WADB glue (preserved)
 - `console/` — small XR operational surfaces
 
-## Next frontier
+## Current vs next
 
 See [NEXT.md](NEXT.md).
 
-Active line of work is now **`experiments/monado-viture/`**: presenting the Luma Ultra
-as a real OpenXR HMD through Monado on Linux, which is NEXT.md item 4 made concrete.
-Stardust XR remains the frontier after that.
+**Current work:** `experiments/monado-viture/` — Luma Ultra as a real OpenXR HMD
+through Monado on Linux.
+
+**Next frontier after that:** Stardust XR (`experiments/stardust.md`).

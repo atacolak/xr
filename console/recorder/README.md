@@ -2,7 +2,7 @@
 
 Package: `sh.colak.xrconsole.recorder`
 
-![idle recorder UI on Fold DeX](docs/ui.png)
+![live Luma Ultra RGB preview in XR field recorder on Fold DeX](docs/ui.png)
 
 V1 records **only**:
 

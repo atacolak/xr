@@ -1,6 +1,6 @@
 # Stardust XR
 
-**NEXT ACTIVE FRONTIER: STARDUST XR**
+**Next frontier after current Monado/VITURE work.**
 
 We are interested in Stardust because it is much closer to an actual
 spatial display server than UxSpace. It is primarily a Linux/OpenXR

@@ -1,7 +1,7 @@
 # Herdr (external)
 
 Daily Herdr is the fork https://github.com/atacolak/herdr
-(`/home/sf/workspace/herdr`), based on upstream Herdr 0.9.1.
+(`~/workspace/herdr`), based on upstream Herdr 0.9.1.
 
 Herdr is the terminal runtime agents live in. OMP stays on **sfub**.
 The Fold is a thin client / remote-control target.

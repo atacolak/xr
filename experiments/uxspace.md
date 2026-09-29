@@ -7,7 +7,7 @@ Stop feature-polishing it from this workspace.
 - Preserved branch: `fold5-luma-ultra`
 - Branch head (at preservation): `2a4840a3d695c3a7191846e35108b3eb8bc67994`
 - Upstream base: `darkclad/uxspace` `main` `2fefa68f8e24590756e6c68cc11276386abe0bd2`
-- Local checkout: `/home/sf/workspace/uxspace` (do not delete)
+- Local checkout: `~/workspace/uxspace` (do not delete)
 - Device: Samsung Galaxy Z Fold5, SM-F946B, Android 16, One UI 8.5, stock
 - Glasses: VITURE Luma Ultra
 
@@ -86,14 +86,14 @@ was useful because it let us *feel* those problems.
 ## How to reproduce later
 
 ```sh
-cd /home/sf/workspace/uxspace
+cd ~/workspace/uxspace
 git checkout fold5-luma-ultra
 # VITURE SDK remains untracked; place libglasses per Android/glasses gitignores
 ./scripts/fold-dev smoke
 # or, once an APK is built:
-#   /home/sf/xr/scripts/xrctl deploy Android/app/build/outputs/apk/debug/app-debug.apk \
+#   ~/xr/scripts/xrctl deploy Android/app/build/outputs/apk/debug/app-debug.apk \
 #     --package com.uxspace
-#   /home/sf/xr/scripts/xrctl smoke com.uxspace
+#   ~/xr/scripts/xrctl smoke com.uxspace
 ```
 
 Proprietary `.so` / headers stay gitignored. APKs, logcat, and
