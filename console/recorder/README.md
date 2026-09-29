@@ -6,7 +6,8 @@ Package: `sh.colak.xrconsole.recorder`
 
 V1 records **only**:
 
-1. VITURE Luma Ultra **front RGB** camera (SDK MJPEG 1920×1080@30)
+1. VITURE Luma Ultra **front RGB** camera — measured **2.07 MP / 1080p**,
+   SDK MJPEG 1920×1080@30. Nothing higher is advertised.
 2. One selected Android audio input, encoded as AAC 48 kHz mono
 
 The microphone selector enumerates capture-capable Android inputs: built-in
@@ -28,21 +29,20 @@ running.
 
 ## Operation
 
-Idle: 16:9 RGB viewer (foreground only; fills leftover window space), timer,
-glasses status icon, gear, **RECORD** (dimmed until an RGB camera is
-connected). Recording: timer, **● REC**, **STOP**.
+Idle: edge-to-edge RGB preview (foreground only) with overlay chrome —
+timer, glasses status dot, gear, **RECORD**. Recording: **● REC**, timer,
+**STOP**. RECORD is dimmed until an RGB camera is connected.
 
-The 16:9 viewer shows the live front RGB stream only while the activity is
-resumed. Backgrounding stops the preview camera immediately; an in-progress
-recording keeps encoding without updating the view. Hitting Record takes the
-USB camera from preview; idle preview can start again after stop. Resizing
-the DeX window keeps the viewer 16:9 inside the leftover space; chrome does
-not clip.
+The preview fills the content area. Timer / glasses-dot / gear / RECORD|STOP
+sit on a bottom scrim. RECORD and STOP share one text-sized hit box so the
+label swap does not jump. Backgrounding stops the preview camera immediately;
+an in-progress recording keeps encoding without updating the view. Hitting
+Record takes the USB camera from preview; idle preview can start again after
+stop. Resizing the DeX window keeps the preview filling the content area.
 
-A tiny glasses icon (green = RGB ready, dim = missing) is the only idle
-connection chrome. Microphone choice lives under the gear as a one-line
-settings popup. Requested vs routed mic still lands in `session.json`; it is
-not shown on the idle screen.
+A green status dot = RGB ready, dim = missing. Microphone choice lives under
+the gear as a one-line settings popup. Requested vs routed mic still lands in
+`session.json`; it is not shown on the idle screen.
 
 The app does not register as a USB default handler. Connecting glasses
 does not open a “choose an app for this USB device” prompt. Presence is
