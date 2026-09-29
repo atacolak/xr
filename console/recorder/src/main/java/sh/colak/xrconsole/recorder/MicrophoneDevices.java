@@ -48,7 +48,7 @@ final class MicrophoneDevices {
                 .thenComparing(d -> product(d).toLowerCase())
                 .thenComparing(AudioDeviceInfo::getAddress));
         for (AudioDeviceInfo d : devices) {
-            if (!d.isSource()) continue;
+            if (!isSelectableInput(d)) continue;
             JSONObject id = describe(d);
             String product = product(d);
             String type = displayType(d.getType());
@@ -186,5 +186,24 @@ final class MicrophoneDevices {
         JSONArray a = new JSONArray();
         for (int v : values) a.put(v);
         return a;
+    }
+
+    static boolean isSelectableInput(AudioDeviceInfo d) {
+        if (d == null || !d.isSource()) return false;
+        switch (d.getType()) {
+            case AudioDeviceInfo.TYPE_BUILTIN_MIC:
+            case AudioDeviceInfo.TYPE_WIRED_HEADSET:
+            case AudioDeviceInfo.TYPE_USB_DEVICE:
+            case AudioDeviceInfo.TYPE_USB_HEADSET:
+            case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
+            case AudioDeviceInfo.TYPE_BLE_HEADSET:
+            case AudioDeviceInfo.TYPE_BLE_BROADCAST:
+            case AudioDeviceInfo.TYPE_HDMI:
+            case AudioDeviceInfo.TYPE_LINE_ANALOG:
+            case AudioDeviceInfo.TYPE_LINE_DIGITAL:
+                return true;
+            default:
+                return false;
+        }
     }
 }

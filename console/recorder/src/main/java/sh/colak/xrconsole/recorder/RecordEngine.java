@@ -114,16 +114,18 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         usb.register();
         ctx.registerReceiver(detachRx, new IntentFilter(UsbManager.ACTION_USB_DEVICE_DETACHED));
         glassesDev = usb.findGlasses();
+        camDev = usb.findCamera();
         st.glassesPresent = glassesDev != null;
+        st.cameraPresent = camDev != null;
+        applyPresence(usb.presence());
         int gPid = glassesDev != null ? glassesDev.getProductId() : NativeRgbCamera.LUMA_ULTRA_PID;
         int camVid = NativeRgbCamera.nativeCameraVid(gPid);
         int camPid = NativeRgbCamera.nativeCameraPid(gPid);
         if (camVid == 0) camVid = NativeRgbCamera.CAMERA_VID_SONIX;
         if (camPid == 0) camPid = NativeRgbCamera.CAMERA_PID_LUMA;
-        camDev = usb.findCamera(camVid, camPid);
+        if (camDev == null) camDev = usb.findCamera(camVid, camPid);
         if (camDev == null) {
-            throw new IllegalStateException("Luma RGB camera USB not found vid=0x"
-                    + Integer.toHexString(camVid) + " pid=0x" + Integer.toHexString(camPid));
+            throw new IllegalStateException("RGB camera USB not found");
         }
         st.cameraPresent = true;
         boolean valid = NativeRgbCamera.nativeIsValidCamera(camDev.getVendorId(), camDev.getProductId());
@@ -593,8 +595,25 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         if (store != null) store.close();
         if (fatal != null) st.fail(fatal);
         else st.setPhase(RecState.Phase.IDLE);
+        applyPresence(new UsbHost(ctx, this).presence());
         st.ping();
         Log.i(TAG, "stopped dir=" + st.sessionDir + " last=" + st.lastMp4);
+    }
+
+    static void applyPresence(UsbHost.Presence presence) {
+        RecState st = RecState.I;
+        st.glassesPresent = presence.glasses != null;
+        st.cameraPresent = presence.camera != null;
+        if (presence.camera != null) {
+            st.glassesStatus = "GLASSES connected  RGB " + UsbHost.describe(presence.camera);
+            if (st.phase == RecState.Phase.IDLE) st.rgbInfo = "RGB ready";
+        } else if (presence.glasses != null) {
+            st.glassesStatus = "GLASSES connected  RGB missing";
+            if (st.phase == RecState.Phase.IDLE) st.rgbInfo = "RGB —";
+        } else {
+            st.glassesStatus = "GLASSES disconnected";
+            if (st.phase == RecState.Phase.IDLE) st.rgbInfo = "RGB —";
+        }
     }
 
     private void fail(String msg) {

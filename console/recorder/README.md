@@ -9,8 +9,9 @@ V1 records **only**:
 1. VITURE Luma Ultra **front RGB** camera (SDK MJPEG 1920×1080@30)
 2. One selected Android audio input, encoded as AAC 48 kHz mono
 
-The microphone selector enumerates current Android input devices and offers an
-explicit **Auto / System Default** choice. Explicit choices persist by semantic
+The microphone selector enumerates capture-capable Android inputs: built-in
+mics, USB, wired headset, Bluetooth SCO/LE. Telephony RX, remote submix, and
+other internal mix ports are omitted. Explicit choices persist by semantic
 identity (device type, product name, and address), are resolved again when a
 recording starts, and are verified against `AudioRecord.getRoutedDevice()`.
 Requested and actual routes remain distinct in metadata. A missing explicit
@@ -26,8 +27,13 @@ must come up even if the glasses path fails.
 
 ## Operation
 
-Idle: **RECORD**, microphone selector. Recording: **● REC**, elapsed time,
+Idle: glasses/RGB presence, **RECORD** (dimmed until an RGB camera is
+connected), microphone selector. Recording: **● REC**, elapsed time,
 RGB format, requested and actual mic, remaining storage, **STOP**.
+
+The app does not register as a USB default handler. Connecting glasses
+does not open a “choose an app for this USB device” prompt. Presence is
+observed from the live USB device list.
 
 Foreground service types: `camera|microphone|connectedDevice`. Recording
 survives UI background, fold, display off, DeX, Termux/Mosh. Notification
@@ -68,9 +74,9 @@ encoder running and starts the next MP4 on a keyframe.
 
 Runtime (grant once): `CAMERA`, `RECORD_AUDIO`, `POST_NOTIFICATIONS`.
 
-USB: system permission dialog for the Luma RGB camera
-(`vid=0x0C45 pid=0x636B`). Already-attached glasses are claimed; do not
-replug just because an attach callback was missed.
+USB: permission is requested when recording starts, not by registering as a
+USB default app. Already-attached glasses are claimed from the live device
+list; do not replug just because an attach callback was missed.
 
 ## Codec / bitrate
 

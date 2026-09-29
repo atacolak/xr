@@ -2,10 +2,14 @@ package sh.colak.xrconsole.recorder;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -21,10 +25,11 @@ import android.widget.TextView;
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
     static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
-    private TextView rec, timer, rgb, mic, storage, err;
+    private TextView rec, timer, glasses, rgb, mic, storage, err;
     private Spinner micSelector;
     private Button btn;
     private AudioDeviceMonitor audioMonitor;
+    private GlassesMonitor glassesMonitor;
     private final Handler h = new Handler(Looper.getMainLooper());
     private long smokeSegMs = RecordEngine.DEFAULT_SEGMENT_MS;
     private long smokeDurMs;
@@ -50,6 +55,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         timer.setText("00:00:00");
         root.addView(timer);
 
+        glasses = tv(18, 0xFFDDDDDD);
         rgb = tv(18, 0xFFDDDDDD);
         mic = tv(18, 0xFFDDDDDD);
         TextView micLabel = tv(14, 0xFFAAAAAA);
@@ -58,6 +64,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         micSelector.setMinimumHeight(dp(56));
         storage = tv(18, 0xFFDDDDDD);
         err = tv(16, 0xFFFF6666);
+        root.addView(glasses);
         root.addView(rgb);
         root.addView(micLabel);
         root.addView(micSelector);
@@ -77,8 +84,11 @@ public final class MainActivity extends Activity implements RecState.Listener {
         setContentView(root);
         RecState.I.add(this);
         audioMonitor = new AudioDeviceMonitor();
+        glassesMonitor = new GlassesMonitor();
         refreshMicrophones();
+        refreshPresence();
         audioMonitor.start();
+        glassesMonitor.start();
         handleIntent(getIntent());
         render();
         h.post(tick);
@@ -136,6 +146,12 @@ public final class MainActivity extends Activity implements RecState.Listener {
     private void tryStart(long segMs, long durMs) {
         if (!hasPerms()) {
             requestPerms();
+            return;
+        }
+        refreshPresence();
+        if (!RecState.I.cameraPresent) {
+            RecState.I.fail("connect glasses RGB camera to record");
+            render();
             return;
         }
         RecState.I.error = "";
@@ -237,24 +253,69 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
     @Override public void onRecState() { h.post(this::render); }
 
+    private void refreshPresence() {
+        RecordEngine.applyPresence(new UsbHost(this, unusedUsb).presence());
+    }
+
+    private final UsbHost.Listener unusedUsb = new UsbHost.Listener() {
+        @Override public void onUsbOpened(android.hardware.usb.UsbDevice device,
+                                          android.hardware.usb.UsbDeviceConnection connection) {}
+        @Override public void onUsbDenied(android.hardware.usb.UsbDevice device) {}
+    };
+
+    private final class GlassesMonitor extends BroadcastReceiver {
+        private boolean registered;
+        void start() {
+            if (registered) return;
+            IntentFilter f = new IntentFilter();
+            f.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
+            f.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
+            if (Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(this, f, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                registerReceiver(this, f);
+            }
+            registered = true;
+        }
+        void stop() {
+            if (!registered) return;
+            try { unregisterReceiver(this); } catch (Exception ignored) {}
+            registered = false;
+        }
+        @Override public void onReceive(Context context, Intent intent) {
+            refreshPresence();
+            render();
+        }
+    }
+
     private void render() {
         RecState st = RecState.I;
         boolean recOn = st.phase == RecState.Phase.RECORDING;
+        boolean ready = st.cameraPresent;
         rec.setText(recOn ? "● REC" : (st.phase == RecState.Phase.ERROR ? "ERROR" : st.phase.name()));
         rec.setTextColor(recOn || st.phase == RecState.Phase.ERROR ? 0xFFE11D48 : Color.WHITE);
         timer.setText(RecordService.formatDur(st.elapsedMs()));
+        glasses.setText(st.glassesStatus);
+        glasses.setTextColor(ready ? 0xFF86EFAC : 0xFFF87171);
         rgb.setText(st.rgbInfo);
         mic.setText("MIC selected: " + st.micSelection + "\nactual: " + st.micRoute);
         micSelector.setEnabled(st.phase == RecState.Phase.IDLE || st.phase == RecState.Phase.ERROR);
         long mb = st.storageFreeBytes / (1024 * 1024);
         storage.setText(st.storageFreeBytes > 0 ? ("STORAGE " + mb + " MB free") : "STORAGE —");
-        err.setText(st.error != null ? st.error : "");
+        if (st.phase == RecState.Phase.IDLE && !ready) {
+            err.setText("connect glasses to record");
+        } else {
+            err.setText(st.error != null ? st.error : "");
+        }
         if (recOn || st.phase == RecState.Phase.STARTING || st.phase == RecState.Phase.STOPPING) {
             btn.setText("STOP");
+            btn.setEnabled(st.phase != RecState.Phase.STOPPING);
+            btn.setAlpha(1f);
         } else {
             btn.setText("RECORD");
+            btn.setEnabled(ready && st.phase != RecState.Phase.STOPPING);
+            btn.setAlpha(ready ? 1f : 0.35f);
         }
-        btn.setEnabled(st.phase != RecState.Phase.STOPPING);
     }
 
     private TextView tv(int sp, int color) {
@@ -273,6 +334,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override protected void onDestroy() {
         RecState.I.remove(this);
         if (audioMonitor != null) audioMonitor.stop();
+        if (glassesMonitor != null) glassesMonitor.stop();
         h.removeCallbacks(tick);
         super.onDestroy();
     }

@@ -73,18 +73,58 @@ final class UsbHost {
     UsbDevice findGlasses() {
         UsbDevice preferred = null;
         for (UsbDevice d : usb.getDeviceList().values()) {
-            if (d.getVendorId() != VITURE_VID) continue;
-            if (d.getProductId() == 0x1104) return d;
+            if (!isGlassesControl(d)) continue;
+            if (d.getProductId() == NativeRgbCamera.LUMA_ULTRA_PID) return d;
             if (preferred == null) preferred = d;
         }
         return preferred;
+    }
+
+    UsbDevice findCamera() {
+        for (UsbDevice d : usb.getDeviceList().values()) {
+            if (isRgbCamera(d)) return d;
+        }
+        return null;
     }
 
     UsbDevice findCamera(int vid, int pid) {
         for (UsbDevice d : usb.getDeviceList().values()) {
             if (d.getVendorId() == vid && d.getProductId() == pid) return d;
         }
-        return null;
+        return findCamera();
+    }
+
+    Presence presence() {
+        UsbDevice glasses = findGlasses();
+        UsbDevice camera = findCamera();
+        return new Presence(glasses, camera);
+    }
+
+    static final class Presence {
+        final UsbDevice glasses;
+        final UsbDevice camera;
+        Presence(UsbDevice glasses, UsbDevice camera) {
+            this.glasses = glasses;
+            this.camera = camera;
+        }
+        boolean ready() { return camera != null; }
+        boolean glassesOnly() { return glasses != null && camera == null; }
+    }
+
+    static boolean isRgbCamera(UsbDevice d) {
+        if (d == null) return false;
+        if (NativeRgbCamera.load() && NativeRgbCamera.nativeIsValidCamera(d.getVendorId(), d.getProductId())) {
+            return true;
+        }
+        return d.getVendorId() == CAMERA_VID && d.getProductId() == NativeRgbCamera.CAMERA_PID_LUMA;
+    }
+
+    static boolean isGlassesControl(UsbDevice d) {
+        if (d == null || isRgbCamera(d)) return false;
+        if (d.getVendorId() == VITURE_VID) return true;
+        String name = ((d.getManufacturerName() == null ? "" : d.getManufacturerName())
+                + " " + (d.getProductName() == null ? "" : d.getProductName())).toLowerCase();
+        return name.contains("viture") || name.contains("xr glasses") || name.contains("smart glasses");
     }
 
     boolean hasPermission(UsbDevice d) {
