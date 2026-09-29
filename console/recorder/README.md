@@ -5,7 +5,15 @@ Package: `sh.colak.xrconsole.recorder`
 V1 records **only**:
 
 1. VITURE Luma Ultra **front RGB** camera (SDK MJPEG 1920×1080@30)
-2. The currently routed Android microphone (AAC 48 kHz mono)
+2. One selected Android audio input, encoded as AAC 48 kHz mono
+
+The microphone selector enumerates current Android input devices and offers an
+explicit **Auto / System Default** choice. Explicit choices persist by semantic
+identity (device type, product name, and address), are resolved again when a
+recording starts, and are verified against `AudioRecord.getRoutedDevice()`.
+Requested and actual routes remain distinct in metadata. A missing explicit
+device blocks recording; disconnecting it stops the active recording rather
+than silently substituting another microphone.
 
 Stereo tracking cameras, pose, IMU, ASR, GPS, and annotation are out of
 scope. Timestamps use one monotonic origin (`elapsedRealtimeNanos`) so
@@ -16,8 +24,8 @@ must come up even if the glasses path fails.
 
 ## Operation
 
-Idle: **RECORD**. Recording: **● REC**, elapsed time, RGB format, mic
-name, remaining storage, **STOP**.
+Idle: **RECORD**, microphone selector. Recording: **● REC**, elapsed time,
+RGB format, requested and actual mic, remaining storage, **STOP**.
 
 Foreground service types: `camera|microphone|connectedDevice`. Recording
 survives UI background, fold, display off, DeX, Termux/Mosh. Notification
@@ -54,16 +62,23 @@ USB: system permission dialog for the Luma RGB camera
 (`vid=0x0C45 pid=0x636B`). Already-attached glasses are claimed; do not
 replug just because an attach callback was missed.
 
-## Codec / bitrate (targets)
+## Codec / bitrate
 
-| | target |
+| | configured target |
 |---|---|
 | RGB input | VITURE SDK MJPEG ~1920×1080@30 |
 | Video | hardware HEVC, fallback H.264, 12 Mbps |
 | Audio | AAC-LC 48 kHz mono 128 kbps |
 
-Measured bitrate / MB-min / GB-hour / fps are written to `session.json`
-`stats` after a real recording. Do not invent numbers here.
+`session.json` records available inputs at start, selection mode, requested and
+actual routed devices, route-match status, PCM sample count, peak and RMS, and
+measured bitrate / MB-min / GB-hour / fps. `events.jsonl` records route changes.
+
+As of 2026-09-29 the current APK builds, but the active hardware verification
+run is blocked before ADB because the Fold Termux SSH endpoint is unreachable
+from sfub (`No route to host`). Consequently the target codec/fps/bitrate,
+Luma microphone exposure, segmentation, background survival, and 30-second
+capture remain unverified; do not treat configured targets as measurements.
 
 ## Development
 

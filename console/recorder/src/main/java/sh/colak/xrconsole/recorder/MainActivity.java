@@ -12,14 +12,18 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
 
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
     private TextView rec, timer, rgb, mic, storage, err;
+    private Spinner micSelector;
     private Button btn;
+    private AudioDeviceMonitor audioMonitor;
     private final Handler h = new Handler(Looper.getMainLooper());
     private long smokeSegMs = RecordEngine.DEFAULT_SEGMENT_MS;
     private long smokeDurMs;
@@ -47,9 +51,15 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
         rgb = tv(18, 0xFFDDDDDD);
         mic = tv(18, 0xFFDDDDDD);
+        TextView micLabel = tv(14, 0xFFAAAAAA);
+        micLabel.setText("MIC");
+        micSelector = new Spinner(this);
+        micSelector.setMinimumHeight(dp(56));
         storage = tv(18, 0xFFDDDDDD);
         err = tv(16, 0xFFFF6666);
         root.addView(rgb);
+        root.addView(micLabel);
+        root.addView(micSelector);
         root.addView(mic);
         root.addView(storage);
         root.addView(err);
@@ -65,6 +75,9 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
         setContentView(root);
         RecState.I.add(this);
+        audioMonitor = new AudioDeviceMonitor();
+        refreshMicrophones();
+        audioMonitor.start();
         handleIntent(getIntent());
         render();
         h.post(tick);
@@ -136,6 +149,64 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
     }
 
+    private void refreshMicrophones() {
+        java.util.List<MicrophoneDevices.Choice> choices = MicrophoneDevices.enumerate(this);
+        MicrophoneDevices.Choice selected = MicrophoneDevices.selected(this, choices);
+        java.util.ArrayList<String> labels = new java.util.ArrayList<>();
+        int selectedIndex = -1;
+        for (int i = 0; i < choices.size(); i++) {
+            labels.add(choices.get(i).label);
+            if (choices.get(i).key.equals(selected.key)) selectedIndex = i;
+        }
+        if (selectedIndex < 0) {
+            choices.add(selected);
+            labels.add(selected.label);
+            selectedIndex = choices.size() - 1;
+        }
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_dropdown_item, labels);
+        micSelector.setAdapter(adapter);
+        micSelector.setSelection(selectedIndex, false);
+        micSelector.setOnItemSelectedListener(new android.widget.AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(android.widget.AdapterView<?> parent,
+                                                  android.view.View view, int position, long id) {
+                if (position < choices.size()) {
+                    MicrophoneDevices.Choice choice = choices.get(position);
+                    MicrophoneDevices.persist(MainActivity.this, choice);
+                    RecState.I.micSelection = choice.label;
+                    render();
+                }
+            }
+            @Override public void onNothingSelected(android.widget.AdapterView<?> parent) {}
+        });
+        RecState.I.micSelection = selected.label;
+    }
+
+    private final class AudioDeviceMonitor extends android.media.AudioDeviceCallback {
+        private final android.media.AudioManager manager =
+                (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+
+        void start() {
+            if (manager != null) manager.registerAudioDeviceCallback(this, h);
+        }
+
+        void stop() {
+            if (manager != null) manager.unregisterAudioDeviceCallback(this);
+        }
+
+        @Override public void onAudioDevicesAdded(android.media.AudioDeviceInfo[] added) {
+            if (RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR) {
+                refreshMicrophones();
+            }
+        }
+
+        @Override public void onAudioDevicesRemoved(android.media.AudioDeviceInfo[] removed) {
+            if (RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR) {
+                refreshMicrophones();
+            }
+        }
+    }
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             render();
@@ -152,7 +223,8 @@ public final class MainActivity extends Activity implements RecState.Listener {
         rec.setTextColor(recOn || st.phase == RecState.Phase.ERROR ? 0xFFE11D48 : Color.WHITE);
         timer.setText(RecordService.formatDur(st.elapsedMs()));
         rgb.setText(st.rgbInfo);
-        mic.setText("MIC " + st.micName);
+        mic.setText("MIC selected: " + st.micSelection + "\nactual: " + st.micRoute);
+        micSelector.setEnabled(st.phase == RecState.Phase.IDLE || st.phase == RecState.Phase.ERROR);
         long mb = st.storageFreeBytes / (1024 * 1024);
         storage.setText(st.storageFreeBytes > 0 ? ("STORAGE " + mb + " MB free") : "STORAGE —");
         err.setText(st.error != null ? st.error : "");
@@ -178,6 +250,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
 
     @Override protected void onDestroy() {
         RecState.I.remove(this);
+        if (audioMonitor != null) audioMonitor.stop();
         h.removeCallbacks(tick);
         super.onDestroy();
     }

@@ -46,13 +46,13 @@ echo "[smoke] locate session"
   >"$OUT/current-session.txt" 2>"$OUT/current-session.err" || true
 cat "$OUT/current-session.txt" 2>/dev/null || true
 
-SESSION_DIR="$(head -1 "$OUT/current-session.txt" 2>/dev/null || true)"
+SESSION_DIR="$(sed -n '1p' "$OUT/current-session.txt" 2>/dev/null || true)"
 SESSION_DIR="${SESSION_DIR//$'\r'/}"
 if [ -z "$SESSION_DIR" ]; then
   echo "[smoke] trying Movies/XRConsole/Recorder/current.txt"
   "$XRCTL" adb shell cat /sdcard/Movies/XRConsole/Recorder/current.txt \
     >"$OUT/current-session.txt" 2>/dev/null || true
-  SESSION_DIR="$(head -1 "$OUT/current-session.txt" 2>/dev/null || true)"
+  SESSION_DIR="$(sed -n '1p' "$OUT/current-session.txt" 2>/dev/null || true)"
   SESSION_DIR="${SESSION_DIR//$'\r'/}"
 fi
 echo "session_dir=$SESSION_DIR" | tee "$OUT/session_dir.txt"
@@ -61,9 +61,17 @@ if [ -n "$SESSION_DIR" ]; then
   "$XRCTL" adb shell ls -l "$SESSION_DIR" | tee "$OUT/ls.txt"
   "$XRCTL" pull "$SESSION_DIR/session.json" "$OUT/session.json" || true
   "$XRCTL" pull "$SESSION_DIR/events.jsonl" "$OUT/events.jsonl" || true
-  MP4="$("$XRCTL" adb shell ls "$SESSION_DIR" | tr -d '\r' | grep '\.mp4$' | head -1 || true)"
-  if [ -n "$MP4" ]; then
-    "$XRCTL" pull "$SESSION_DIR/$MP4" "$OUT/sample.mp4" || true
+  "$XRCTL" adb shell ls "$SESSION_DIR" | tr -d '\r' \
+    | python3 -c 'import sys; print("\\n".join(x for x in sys.stdin.read().splitlines() if x.endswith(".mp4")))' \
+    >"$OUT/mp4-list.txt"
+  index=0
+  while IFS= read -r mp4; do
+    [ -n "$mp4" ] || continue
+    "$XRCTL" pull "$SESSION_DIR/$mp4" "$OUT/segment-$(printf '%03d' "$index").mp4" || true
+    index=$((index + 1))
+  done <"$OUT/mp4-list.txt"
+  if [ -f "$OUT/segment-000.mp4" ]; then
+    cp "$OUT/segment-000.mp4" "$OUT/sample.mp4"
   fi
 fi
 

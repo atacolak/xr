@@ -14,7 +14,9 @@ final class RecState {
     volatile String error = "";
     volatile String sessionDir = "";
     volatile String lastMp4 = "";
-    volatile String micName = "unknown";
+    volatile String micName = "Auto / System Default";
+    volatile String micSelection = "Auto / System Default";
+    volatile String micRoute = "not recording";
     volatile String videoCodec = "";
     volatile String rgbInfo = "RGB —";
     volatile long startedElapsedMs;

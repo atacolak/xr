@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import json, subprocess, sys, pathlib
+import glob, json, subprocess, sys, pathlib
 out = pathlib.Path(sys.argv[1])
 fails = []
 def need(cond, msg):
@@ -13,11 +13,38 @@ if sess.is_file():
         data = json.loads(sess.read_text())
         need("monotonic_origin_ns" in data, "monotonic origin")
         need("video" in data, "video metadata")
-        need("audio" in data, "audio metadata")
-        keys = ("session_id", "video", "audio", "stats", "rgb_usb")
-        print(json.dumps({k: data.get(k) for k in keys}, indent=2)[:4000])
+        audio = data.get("audio") or {}
+        need(bool(audio), "audio metadata")
+        need(audio.get("selection_mode") in ("auto", "explicit"), "audio selection mode")
+        need("requested_device" in audio, "requested microphone metadata")
+        actual = audio.get("actual_routed_device")
+        need(isinstance(actual, dict) and bool(actual), "actual routed microphone metadata")
+        need(audio.get("route_matches_request") is True, "requested route matches actual route")
+        need(int(audio.get("pcm_samples") or 0) > 0, "captured PCM samples")
+        need(float(audio.get("pcm_peak") or 0) > 0, "audio peak is nonzero")
+        need(float(audio.get("pcm_rms") or 0) > 1, "audio RMS is not digital silence")
+        inputs = data.get("audio_inputs_at_start")
+        need(isinstance(inputs, list), "input-device enumeration metadata")
+        keys = ("session_id", "video", "audio", "audio_inputs_at_start", "stats", "rgb_usb")
+        print(json.dumps({k: data.get(k) for k in keys}, indent=2)[:8000])
     except Exception as e:
         need(False, f"session.json parse {e}")
+segments = sorted(out.glob("segment-*.mp4"))
+need(len(segments) >= 2, f"segment rollover produced {len(segments)} segments")
+for segment in segments:
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name,width,height:format=duration",
+         "-print_format", "json", str(segment)],
+        capture_output=True, text=True)
+    need(probe.returncode == 0, f"{segment.name} independently probeable")
+    if probe.returncode == 0:
+        segment_info = json.loads(probe.stdout)
+        segment_streams = segment_info.get("streams") or []
+        need(any(s.get("codec_type") == "video" for s in segment_streams),
+             f"{segment.name} video track")
+        need(any(s.get("codec_type") == "audio" for s in segment_streams),
+             f"{segment.name} audio track")
 ev = out / "events.jsonl"
 need(ev.is_file() and ev.stat().st_size > 10, "events.jsonl exists")
 mp4 = out / "sample.mp4"

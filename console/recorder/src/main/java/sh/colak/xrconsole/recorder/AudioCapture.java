@@ -39,12 +39,18 @@ final class AudioCapture {
     private Thread thread;
     private volatile boolean running;
     private AudioManager am;
-    JSONObject selected = new JSONObject();
+    private final MicrophoneDevices.Choice requested;
+    private JSONObject actual = new JSONObject();
+    private volatile boolean explicitDisconnected;
+    private long pcmSamples;
+    private double pcmSumSquares;
+    private int pcmPeak;
 
-    AudioCapture(Context ctx, Sink sink, long originMonoNs) {
+    AudioCapture(Context ctx, Sink sink, long originMonoNs, MicrophoneDevices.Choice requested) {
         this.ctx = ctx.getApplicationContext();
         this.sink = sink;
         this.originMonoNs = originMonoNs;
+        this.requested = requested;
     }
 
     synchronized void start() throws Exception {
@@ -63,6 +69,11 @@ final class AudioCapture {
         if (record.getState() != AudioRecord.STATE_INITIALIZED) {
             throw new IllegalStateException("AudioRecord init failed");
         }
+        if (!requested.isAuto()) {
+            if (requested.device == null || !record.setPreferredDevice(requested.device)) {
+                throw new IllegalStateException("microphone routing request rejected: " + requested.label);
+            }
+        }
         am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
         codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
         MediaFormat fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNELS);
@@ -73,7 +84,13 @@ final class AudioCapture {
         codec.start();
         running = true;
         record.startRecording();
-        describeRouted();
+        if (record.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) {
+            throw new IllegalStateException("AudioRecord did not enter recording state");
+        }
+        describeRouted("start");
+        if (!requested.isAuto() && !MicrophoneDevices.sameDevice(requested.identity, record.getRoutedDevice())) {
+            throw new IllegalStateException("requested microphone did not become actual route");
+        }
         if (am != null) {
             am.registerAudioDeviceCallback(cb, null);
         }
@@ -82,31 +99,48 @@ final class AudioCapture {
     }
 
     private final AudioDeviceCallback cb = new AudioDeviceCallback() {
-        @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) { describeRouted(); }
-        @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) { describeRouted(); }
+        @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) {
+            describeRouted("devices_added");
+        }
+
+        @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+            if (!requested.isAuto() && removed != null) {
+                for (AudioDeviceInfo d : removed) {
+                    if (MicrophoneDevices.sameDevice(requested.identity, d)) {
+                        explicitDisconnected = true;
+                        sink.onAudioError("selected microphone disconnected: " + requested.label);
+                        return;
+                    }
+                }
+            }
+            describeRouted("devices_removed");
+        }
     };
 
-    private void describeRouted() {
+    private void describeRouted(String reason) {
         try {
             AudioDeviceInfo d = record != null ? record.getRoutedDevice() : null;
-            JSONObject o = new JSONObject();
-            if (d != null) {
-                o.put("id", d.getId());
-                o.put("type", d.getType());
-                o.put("type_name", typeName(d.getType()));
-                CharSequence prod = d.getProductName();
-                o.put("product", prod != null ? prod.toString() : "");
-                o.put("address", d.getAddress());
-                RecState.I.micName = o.optString("product", typeName(d.getType()));
-            } else {
-                o.put("product", "default");
-                RecState.I.micName = "default";
-            }
-            selected = o;
-            sink.onMicChanged(o);
+            JSONObject o = d != null ? MicrophoneDevices.describe(d) : new JSONObject().put("product", "none");
+            actual = o;
+            String product = o.optString("product");
+            RecState.I.micName = product.isEmpty() ? o.optString("type_name", "none") : product;
+            sink.onMicChanged(audioState(reason));
         } catch (Exception e) {
             Log.w(TAG, "mic describe", e);
         }
+    }
+
+    private JSONObject audioState(String reason) {
+        JSONObject o = new JSONObject();
+        try {
+            o.put("selection_mode", requested.isAuto() ? "auto" : "explicit");
+            o.put("requested_device", requested.identity != null ? requested.identity : JSONObject.NULL);
+            o.put("actual_routed_device", actual);
+            o.put("route_matches_request", requested.isAuto()
+                    || MicrophoneDevices.sameDevice(requested.identity, record != null ? record.getRoutedDevice() : null));
+            o.put("reason", reason);
+        } catch (Exception ignored) {}
+        return o;
     }
 
     static String typeName(int t) {
@@ -122,6 +156,16 @@ final class AudioCapture {
         }
     }
 
+    JSONObject finalState() {
+        JSONObject o = audioState(explicitDisconnected ? "disconnected" : "stop");
+        try {
+            o.put("pcm_samples", pcmSamples);
+            o.put("pcm_peak", pcmPeak);
+            o.put("pcm_rms", pcmSamples > 0 ? Math.sqrt(pcmSumSquares / pcmSamples) : 0);
+        } catch (Exception ignored) {}
+        return o;
+    }
+
     private void loop() {
         byte[] pcm = new byte[2048];
         MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
@@ -134,6 +178,7 @@ final class AudioCapture {
                     break;
                 }
                 if (n == 0) continue;
+                measurePcm(pcm, n);
                 long ptsUs;
                 AudioTimestamp ts = new AudioTimestamp();
                 if (record.getTimestamp(ts, AudioTimestamp.TIMEBASE_BOOTTIME) == AudioRecord.SUCCESS) {
@@ -159,6 +204,16 @@ final class AudioCapture {
             sink.onAudioError("audio " + e.getMessage());
         } finally {
             try { drain(info, true); } catch (Exception ignored) {}
+        }
+    }
+
+    private void measurePcm(byte[] pcm, int n) {
+        for (int i = 0; i + 1 < n; i += 2) {
+            int sample = (short) ((pcm[i] & 0xff) | (pcm[i + 1] << 8));
+            int abs = Math.abs(sample);
+            if (abs > pcmPeak) pcmPeak = abs;
+            pcmSumSquares += (double) sample * sample;
+            pcmSamples++;
         }
     }
 

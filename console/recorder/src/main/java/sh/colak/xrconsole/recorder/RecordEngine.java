@@ -173,7 +173,10 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
                     .put("usb", UsbHost.describe(device))
                     .put("fd", fd)
                     .put("sdk_version", NativeRgbCamera.sdkVersion()));
-            audio = new AudioCapture(ctx, this, originNs);
+            MicrophoneDevices.Choice requestedMic = MicrophoneDevices.resolveForRecording(ctx);
+            st.micSelection = requestedMic.label;
+            store.put("audio_inputs_at_start", MicrophoneDevices.enumerateJson(ctx));
+            audio = new AudioCapture(ctx, this, originNs, requestedMic);
             audio.start();
             lastFrameElapsed = SystemClock.elapsedRealtime();
             Log.i(TAG, "RGB camera streaming " + UsbHost.describe(device));
@@ -464,15 +467,23 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         fail("microphone: " + msg);
     }
 
-    @Override public void onMicChanged(JSONObject device) {
+    @Override public void onMicChanged(JSONObject audioState) {
         try {
-            store.put("audio", new JSONObject()
+            JSONObject actual = audioState.optJSONObject("actual_routed_device");
+            String product = actual != null ? actual.optString("product") : "";
+            st.micRoute = product.isEmpty() && actual != null
+                    ? actual.optString("type_name", "none") : product;
+            JSONObject meta = new JSONObject()
                     .put("codec", "aac")
                     .put("sample_rate", AudioCapture.SAMPLE_RATE)
                     .put("channels", AudioCapture.CHANNELS)
                     .put("bitrate", AudioCapture.BITRATE)
-                    .put("device", device));
-            store.event("mic_route", device);
+                    .put("selection_mode", audioState.optString("selection_mode"))
+                    .put("requested_device", audioState.opt("requested_device"))
+                    .put("actual_routed_device", audioState.opt("actual_routed_device"))
+                    .put("route_matches_request", audioState.optBoolean("route_matches_request"));
+            store.put("audio", meta);
+            store.event("mic_route", audioState);
             store.flushSession();
             RecState.I.ping();
         } catch (Exception ignored) {}
@@ -531,8 +542,8 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
         running = false;
         try { NativeRgbCamera.nativeStop(); } catch (Throwable ignored) {}
         try { NativeRgbCamera.nativeDestroy(); } catch (Throwable ignored) {}
-        try { if (audio != null) audio.stop(); } catch (Throwable ignored) {}
         try { if (encodeThread != null) encodeThread.join(3000); } catch (Exception ignored) {}
+        try { if (audio != null) audio.stop(); } catch (Throwable ignored) {}
         synchronized (muxLock) { closeMuxerLocked("stop"); }
         try { if (video != null) video.stop(); } catch (Exception ignored) {}
         try { if (video != null) video.release(); } catch (Exception ignored) {}
@@ -555,6 +566,21 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
             stats.put("measured_fps", st.fps);
             store.put("stats", stats);
             store.event("session_end", stats);
+        } catch (Exception ignored) {}
+        try {
+            if (audio != null) {
+                JSONObject finalAudio = audio.finalState();
+                JSONObject current = store.session.optJSONObject("audio");
+                if (current == null) current = new JSONObject();
+                current.put("selection_mode", finalAudio.optString("selection_mode"));
+                current.put("requested_device", finalAudio.opt("requested_device"));
+                current.put("actual_routed_device", finalAudio.opt("actual_routed_device"));
+                current.put("route_matches_request", finalAudio.optBoolean("route_matches_request"));
+                current.put("pcm_samples", finalAudio.optLong("pcm_samples"));
+                current.put("pcm_peak", finalAudio.optInt("pcm_peak"));
+                current.put("pcm_rms", finalAudio.optDouble("pcm_rms"));
+                store.put("audio", current);
+            }
         } catch (Exception ignored) {}
         if (store != null) store.close();
         if (fatal != null) st.fail(fatal);
