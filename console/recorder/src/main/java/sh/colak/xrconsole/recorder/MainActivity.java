@@ -10,6 +10,8 @@ import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.hardware.usb.UsbManager;
@@ -22,7 +24,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -33,10 +34,10 @@ import android.widget.TextView;
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
     static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
-    private TextView rec, timer, err;
+    private TextView rec, timer, err, btn;
     private ImageButton glassesBtn, gearBtn;
     private ImageView preview;
-    private Button btn;
+    private int actionW, actionH;
     private Dialog settings;
     private AudioDeviceMonitor audioMonitor;
     private GlassesMonitor glassesMonitor;
@@ -48,30 +49,33 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(Color.BLACK);
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(Color.BLACK);
-        int pad = dp(16);
-        root.setPadding(pad, pad, pad, pad);
 
-        FrameLayout previewSlot = new FrameLayout(this);
-        LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
-        previewSlot.setLayoutParams(slotLp);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+
         preview = RgbPreview.createView(this);
-        FrameLayout.LayoutParams previewLp = new FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        previewLp.gravity = Gravity.CENTER;
-        preview.setLayoutParams(previewLp);
-        previewSlot.addView(preview);
-        root.addView(previewSlot);
+        preview.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(preview);
+
+        View scrim = new View(this);
+        scrim.setBackgroundResource(R.drawable.overlay_bottom);
+        FrameLayout.LayoutParams scrimLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(120));
+        scrimLp.gravity = Gravity.BOTTOM;
+        scrim.setLayoutParams(scrimLp);
+        scrim.setClickable(false);
+        scrim.setFocusable(false);
+        root.addView(scrim);
 
         LinearLayout chrome = new LinearLayout(this);
         chrome.setOrientation(LinearLayout.HORIZONTAL);
         chrome.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams chromeLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(48));
-        chromeLp.topMargin = dp(8);
+        int pad = dp(12);
+        chrome.setPadding(pad, 0, pad, pad);
+        FrameLayout.LayoutParams chromeLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        chromeLp.gravity = Gravity.BOTTOM;
         chrome.setLayoutParams(chromeLp);
 
         glassesBtn = iconButton(R.drawable.ic_glasses);
@@ -79,43 +83,45 @@ public final class MainActivity extends Activity implements RecState.Listener {
         glassesBtn.setClickable(false);
         glassesBtn.setFocusable(false);
 
+        LinearLayout center = new LinearLayout(this);
+        center.setOrientation(LinearLayout.VERTICAL);
+        center.setGravity(Gravity.CENTER_HORIZONTAL);
+        LinearLayout.LayoutParams centerLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        center.setLayoutParams(centerLp);
+
+        rec = tv(14, 0xFFE11D48);
+        rec.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        rec.setShadowLayer(6f, 0, 1, 0xCC000000);
+        rec.setVisibility(View.GONE);
+
         timer = new TextView(this);
         timer.setTextColor(Color.WHITE);
         timer.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        timer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 28);
+        timer.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
         timer.setGravity(Gravity.CENTER);
+        timer.setShadowLayer(6f, 0, 1, 0xCC000000);
         timer.setText("00:00:00");
-        LinearLayout.LayoutParams timerLp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        timer.setLayoutParams(timerLp);
+
+        btn = actionButton();
+        err = tv(13, 0xFFFF6666);
+        err.setShadowLayer(6f, 0, 1, 0xCC000000);
+        err.setVisibility(View.GONE);
+
+        center.addView(rec);
+        center.addView(timer);
+        center.addView(btn);
+        center.addView(err);
 
         gearBtn = iconButton(R.drawable.ic_gear);
         gearBtn.setContentDescription("Settings");
         gearBtn.setOnClickListener(v -> showSettings());
 
         chrome.addView(glassesBtn);
-        chrome.addView(timer);
+        chrome.addView(center);
         chrome.addView(gearBtn);
         root.addView(chrome);
-
-        rec = tv(18, 0xFFE11D48);
-        rec.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        rec.setVisibility(View.GONE);
-        root.addView(rec);
-
-        err = tv(15, 0xFFFF6666);
-        err.setPadding(0, dp(4), 0, dp(4));
-        root.addView(err);
-
-        btn = new Button(this);
-        btn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
-        LinearLayout.LayoutParams btnLp = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(56));
-        btnLp.topMargin = dp(8);
-        btn.setLayoutParams(btnLp);
-        btn.setOnClickListener(v -> onToggle());
-        root.addView(btn);
-
         setContentView(root);
+
         RecState.I.add(this);
         audioMonitor = new AudioDeviceMonitor();
         glassesMonitor = new GlassesMonitor();
@@ -440,12 +446,48 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
     }
 
+    private TextView actionButton() {
+        measureActionBox();
+        TextView t = new TextView(this);
+        t.setText("RECORD");
+        t.setTextColor(Color.WHITE);
+        t.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22);
+        t.setGravity(Gravity.CENTER);
+        t.setShadowLayer(6f, 0, 1, 0xCC000000);
+        t.setBackgroundColor(Color.TRANSPARENT);
+        t.setPadding(0, dp(4), 0, dp(4));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(actionW, actionH);
+        lp.gravity = Gravity.CENTER_HORIZONTAL;
+        t.setLayoutParams(lp);
+        t.setOnClickListener(v -> onToggle());
+        return t;
+    }
+
+    private void measureActionBox() {
+        Paint p = new Paint();
+        p.setTypeface(Typeface.MONOSPACE);
+        p.setTextSize(TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_SP, 22, getResources().getDisplayMetrics()));
+        p.setFakeBoldText(true);
+        Rect bounds = new Rect();
+        int w = 0;
+        int h = 0;
+        for (String s : new String[] {"RECORD", "STOP", "STOPPING…"}) {
+            p.getTextBounds(s, 0, s.length(), bounds);
+            w = Math.max(w, bounds.width());
+            h = Math.max(h, bounds.height());
+        }
+        actionW = w + dp(16);
+        actionH = h + dp(16);
+    }
+
     private ImageButton iconButton(int drawable) {
         ImageButton b = new ImageButton(this);
         b.setImageResource(drawable);
         b.setBackgroundColor(Color.TRANSPARENT);
         b.setPadding(dp(8), dp(8), dp(8), dp(8));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(40), dp(40));
         b.setLayoutParams(lp);
         b.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
         b.setImageTintList(ColorStateList.valueOf(0xFFDDDDDD));

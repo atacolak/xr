@@ -31,32 +31,7 @@ final class RgbPreview implements NativeRgbCamera.Listener, UsbHost.Listener {
     private volatile boolean running;
 
     static ImageView createView(Context ctx) {
-        ImageView v = new ImageView(ctx) {
-            @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-                int maxW = MeasureSpec.getSize(widthMeasureSpec);
-                int maxH = MeasureSpec.getSize(heightMeasureSpec);
-                if (MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED) {
-                    maxW = Integer.MAX_VALUE / 4;
-                }
-                if (MeasureSpec.getMode(heightMeasureSpec) == MeasureSpec.UNSPECIFIED) {
-                    maxH = Integer.MAX_VALUE / 4;
-                }
-                if (maxW < 16) maxW = 16;
-                if (maxH < 9) maxH = 9;
-                int w;
-                int h;
-                if ((long) maxW * 9 <= (long) maxH * 16) {
-                    w = maxW;
-                    h = w * 9 / 16;
-                } else {
-                    h = maxH;
-                    w = h * 16 / 9;
-                }
-                if (w < 1) w = 1;
-                if (h < 1) h = 1;
-                setMeasuredDimension(w, h);
-            }
-        };
+        ImageView v = new ImageView(ctx);
         v.setBackgroundColor(0xFF111111);
         v.setScaleType(ImageView.ScaleType.CENTER_CROP);
         v.setAdjustViewBounds(false);
