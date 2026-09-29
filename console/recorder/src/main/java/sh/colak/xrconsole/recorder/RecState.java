@@ -31,6 +31,8 @@ final class RecState {
     volatile boolean cameraPresent;
     volatile String glassesStatus = "GLASSES —";
     volatile String cameraModes = "";
+    volatile PreviewSource previewSource = PreviewSource.RGB;
+    volatile String grayInfo = "";
 
     void add(Listener l) { listeners.add(l); }
     void remove(Listener l) { listeners.remove(l); }

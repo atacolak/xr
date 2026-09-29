@@ -18,3 +18,8 @@ add_library(camera_bridge SHARED camera_bridge.cpp)
 target_include_directories(camera_bridge PRIVATE ${VITURE_INCLUDE_DIR})
 target_link_options(camera_bridge PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(camera_bridge glasses android log)
+
+add_library(carina_bridge SHARED carina_bridge.cpp)
+target_include_directories(carina_bridge PRIVATE ${VITURE_INCLUDE_DIR})
+target_link_options(carina_bridge PRIVATE "-Wl,-z,max-page-size=16384")
+target_link_libraries(carina_bridge glasses android log)

@@ -34,7 +34,7 @@ import android.widget.TextView;
 public final class MainActivity extends Activity implements RecState.Listener {
     static final String ACTION_SMOKE = "sh.colak.xrconsole.recorder.SMOKE";
     static final String ACTION_STOP = "sh.colak.xrconsole.recorder.STOP";
-    private TextView rec, timer, err, btn;
+    private TextView rec, timer, err, btn, cam;
     private ImageButton glassesBtn, gearBtn;
     private ImageView preview;
     private int actionW, actionH;
@@ -103,6 +103,11 @@ public final class MainActivity extends Activity implements RecState.Listener {
         timer.setText("00:00:00");
 
         btn = actionButton();
+        cam = tv(13, Color.WHITE);
+        cam.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        cam.setShadowLayer(6f, 0, 1, 0xCC000000);
+        cam.setPadding(dp(12), dp(6), dp(12), dp(6));
+        cam.setOnClickListener(v -> cyclePreview());
         err = tv(13, 0xFFFF6666);
         err.setShadowLayer(6f, 0, 1, 0xCC000000);
         err.setVisibility(View.GONE);
@@ -110,6 +115,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         center.addView(rec);
         center.addView(timer);
         center.addView(btn);
+        center.addView(cam);
         center.addView(err);
 
         gearBtn = iconButton(R.drawable.ic_gear);
@@ -353,6 +359,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override public void onRecState() {
         h.post(() -> {
             RgbPreview.sync(this);
+            GrayPreview.sync(this);
             render();
         });
     }
@@ -361,13 +368,23 @@ public final class MainActivity extends Activity implements RecState.Listener {
         super.onResume();
         refreshPresence();
         RgbPreview.attach(this, preview);
+        GrayPreview.attach(this, preview);
         render();
     }
 
     @Override protected void onPause() {
         if (settings != null && settings.isShowing()) settings.dismiss();
+        GrayPreview.detach();
         RgbPreview.detach();
         super.onPause();
+    }
+
+    private void cyclePreview() {
+        RecState.I.previewSource = RecState.I.previewSource.next();
+        RecState.I.grayInfo = "";
+        RgbPreview.sync(this);
+        GrayPreview.sync(this);
+        render();
     }
 
     private void refreshPresence() {
@@ -402,6 +419,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         @Override public void onReceive(Context context, Intent intent) {
             refreshPresence();
             RgbPreview.sync(MainActivity.this);
+            GrayPreview.sync(MainActivity.this);
             render();
         }
     }
@@ -429,7 +447,11 @@ public final class MainActivity extends Activity implements RecState.Listener {
         glassesBtn.setImageTintList(ColorStateList.valueOf(ready ? 0xFF86EFAC : 0xFF555555));
         glassesBtn.setAlpha(ready ? 1f : 0.5f);
         glassesBtn.setContentDescription(ready ? "Glasses connected" : "Glasses disconnected");
-        if (st.phase == RecState.Phase.IDLE && !ready) {
+        cam.setText(st.previewSource.label);
+        String gray = st.grayInfo == null ? "" : st.grayInfo;
+        if (st.previewSource.isGray() && !gray.isEmpty()) {
+            err.setText(gray);
+        } else if (st.phase == RecState.Phase.IDLE && !ready) {
             err.setText("connect glasses to record");
         } else {
             err.setText(st.error != null ? st.error : "");
@@ -445,7 +467,6 @@ public final class MainActivity extends Activity implements RecState.Listener {
             btn.setAlpha(ready ? 1f : 0.35f);
         }
     }
-
     private TextView actionButton() {
         measureActionBox();
         TextView t = new TextView(this);
@@ -509,6 +530,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override protected void onDestroy() {
         RecState.I.remove(this);
         if (settings != null && settings.isShowing()) settings.dismiss();
+        GrayPreview.detach();
         RgbPreview.detach();
         if (audioMonitor != null) audioMonitor.stop();
         if (glassesMonitor != null) glassesMonitor.stop();

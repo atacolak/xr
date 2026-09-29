@@ -61,7 +61,8 @@ final class RgbPreview implements NativeRgbCamera.Listener, UsbHost.Listener {
         boolean recordOwns = p == RecState.Phase.STARTING
                 || p == RecState.Phase.RECORDING
                 || p == RecState.Phase.STOPPING;
-        if (!wantFrames || recordOwns || !RecState.I.cameraPresent) {
+        if (!wantFrames || recordOwns || RecState.I.previewSource.isGray()
+                || !RecState.I.cameraPresent) {
             stopIdle();
             return;
         }
