@@ -223,8 +223,10 @@ cmd_deploy() {
   log "scp $APK -> $XRCTL_SSH_HOST:tmp/xrctl-deploy.apk"
   scp "${SSH_OPTS[@]}" "$APK" "$XRCTL_SSH_HOST:tmp/xrctl-deploy.apk"
   log "adb install -r -d -t ($PKG)"
+  local serial
+  serial="$(pick_serial)" || die "no adb device after ensure"
   set +e
-  dev_ssh 'adb install -r -d -t "$HOME/tmp/xrctl-deploy.apk"'
+  dev_ssh "adb -s $(printf '%q' "$serial") install -r -d -t \"\$HOME/tmp/xrctl-deploy.apk\""
   local rc=$?
   set -e
   [ "$rc" -eq 0 ] || die "adb install failed (exit $rc)"

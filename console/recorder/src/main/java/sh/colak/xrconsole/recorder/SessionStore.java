@@ -33,12 +33,13 @@ final class SessionStore {
         this.sessionId = sessionId;
         this.publicDir = publicDir;
         this.fallbackDir = fallbackDir;
-        File chosen = publicDir;
-        if (!mkdirs(publicDir)) {
-            Log.w(TAG, "public Movies path failed, using app-specific " + fallbackDir);
-            mkdirs(fallbackDir);
-            chosen = fallbackDir;
+        File chosen = fallbackDir;
+        if (!mkdirs(fallbackDir)) {
+            throw new IllegalStateException("app-specific recording path unavailable: " + fallbackDir);
         }
+        // Direct File I/O to public Movies is blocked by scoped storage on
+        // current Android. A MediaStore-backed public export can be added
+        // separately; recording truth stays in the writable app-specific path.
         this.dir = chosen;
         try {
             events = new OutputStreamWriter(new FileOutputStream(new File(dir, "events.jsonl"), true),

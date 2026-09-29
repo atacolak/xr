@@ -87,8 +87,7 @@ public final class RecordService extends Service implements RecState.Listener {
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NID, n,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                            | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-                            | ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+                            | ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE);
         } else if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NID, n,
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA

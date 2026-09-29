@@ -44,7 +44,7 @@
         <service
             android:name=".RecordService"
             android:exported="false"
-            android:foregroundServiceType="camera|microphone|connectedDevice"
+            android:foregroundServiceType="camera|microphone"
             android:stopWithTask="false" />
         <service
             android:name=".RecordTileService"

@@ -608,7 +608,7 @@ final class RecordEngine implements NativeRgbCamera.Listener, UsbHost.Listener, 
             p.setReadable(true, false);
         } catch (Exception ignored) {}
         try {
-            File p = new File(ctx.getExternalFilesDir(null), "current-session.txt");
+            File p = new File(ctx.getFilesDir(), "current-session.txt");
             FileOutputStream o = new FileOutputStream(p);
             String s = store.dir.getAbsolutePath() + "\n" + store.sessionId + "\n";
             o.write(s.getBytes(StandardCharsets.UTF_8));
