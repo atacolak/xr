@@ -27,6 +27,7 @@ their own repositories. XR refers to them; it does not absorb them.
 - `tools/herdr-launcher/` — tiny DeX-visible HERDR launcher APK
 - `fold-thinclient/` — existing Termux/WADB glue (preserved)
 - `console/` — small XR operational surfaces (field recorder, not a component dump)
+- `console/recorder/` — Fold + Luma Ultra field recorder (`sh.colak.xrconsole.recorder`)
 
 ## Next frontier
 

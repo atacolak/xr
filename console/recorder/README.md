@@ -2,6 +2,8 @@
 
 Package: `sh.colak.xrconsole.recorder`
 
+![idle recorder UI on Fold DeX](docs/ui.png)
+
 V1 records **only**:
 
 1. VITURE Luma Ultra **front RGB** camera (SDK MJPEG 1920×1080@30)
@@ -37,19 +39,27 @@ explicit error state. It does not keep writing corrupt media.
 
 ## Storage
 
+Capture writes into app-specific storage so a crash still leaves a recoverable
+source file:
+
 ```
-Movies/XRConsole/Recorder/<yyyyMMdd-HHmmss>/
+Android/data/sh.colak.xrconsole.recorder/files/Movies/XRConsole/Recorder/<yyyyMMdd-HHmmss>/
   session.json
   events.jsonl
   <yyyyMMdd-HHmmss>_000.mp4
   ...
 ```
 
-Fallback if public Movies is not writable:
+Each finalized segment is then published through MediaStore so Gallery can see
+it:
 
 ```
-Android/data/sh.colak.xrconsole.recorder/files/Movies/XRConsole/Recorder/...
+Movies/XRConsole/Recorder/<yyyyMMdd-HHmmss>_NNN.mp4
 ```
+
+Gallery indexes the MediaStore copy. The app-private file remains the
+recoverable original. `session.json` records both `path` and `gallery_uri`.
+`scripts/xrctl pull` uses `run-as` for the app-private path.
 
 Segments default to **12 minutes**. Gap-minimized rollover keeps the
 encoder running and starts the next MP4 on a keyframe.
@@ -89,9 +99,8 @@ Measured on the Fold with attached Luma Ultra, 2026-09-29:
   alone produced digital silence; modern communication routing was rejected;
   Samsung fallback SCO activation timed out. DJI validation remains open.
 
-Output currently lives in the app-specific external Movies directory because
-Android 16 scoped storage rejects direct `FileOutputStream` writes to public
-Movies. `scripts/xrctl pull` handles that path through `run-as`.
+Manual STOP finalizes the current segment and publishes it to Gallery. Idle
+resets the timer to `00:00:00`.
 
 ## Development
 

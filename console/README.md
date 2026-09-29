@@ -22,4 +22,6 @@ speech-core, Herdr, OMP, and UxSpace stay in their own repositories
 
 ## Contents
 
-- `recorder/` — V1 field recorder: Luma Ultra front RGB + microphone.
+- [`recorder/`](recorder/) — V1 field recorder: Luma Ultra front RGB + selectable
+  microphone. Package `sh.colak.xrconsole.recorder`. Recordings land in Gallery
+  under `Movies/XRConsole/Recorder/` and keep a recoverable app-private copy.
