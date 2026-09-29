@@ -9,7 +9,7 @@ Long-term input is multimodal:
     agent delegation
 
 Voice is expected to become primary for dictation, commands, and
-delegation. Do not implement ASR in the XR repo.
+delegation. ASR lives in speech-core / Voicecat.
 
 ## What exists today (elsewhere)
 
@@ -22,12 +22,10 @@ delegation. Do not implement ASR in the XR repo.
   STT), not synthesized keystrokes. Lives under `fold-thinclient/scripts/`.
 - Fold Termux extra-keys for the human keyboard row.
 
-Hand tracking is eventual, not now.
-
 ## XR's job
 
-XR should consume voice and agent interfaces, not absorb those codebases.
-Contracts: `integrations/voicecat.md`, `integrations/speech-core.md`,
+XR consumes voice and agent interfaces through
+`integrations/voicecat.md`, `integrations/speech-core.md`, and
 `integrations/herdr.md`.
 
 Pixel/touch synthesis remains an escape hatch for legacy 2D apps. Prefer
@@ -64,7 +62,7 @@ keys **read-only**. Do not wire `xrctl cursor sunlight` until a specific
 Samsung key is identified and shown reversible on this device. Blind
 writes to private SettingsProvider keys are not allowed.
 
-### Future XR-native cursor (do not build in the recorder task)
+### Future XR-native cursor
 
 A normal tiny desktop arrow is not sufficient outdoors. A custom XR
 cursor should investigate:

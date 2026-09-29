@@ -2,7 +2,6 @@
 
 Daily Herdr is the fork https://github.com/atacolak/herdr
 (`/home/sf/workspace/herdr`), based on upstream Herdr 0.9.1.
-XR does not vendor it.
 
 Herdr is the terminal runtime agents live in. OMP stays on **sfub**.
 The Fold is a thin client / remote-control target.
@@ -32,5 +31,4 @@ A durable interactive session on sfub. The Fold must not host OMP.
 
 ## Owned by Herdr
 
-Terminal runtime, persistence, agent pane protocol. Not Mosh, not
-Termux, not the DeX launcher APK, not Voicecat.
+Terminal runtime, persistence, agent pane protocol.

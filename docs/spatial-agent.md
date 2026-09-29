@@ -1,9 +1,7 @@
 # Spatial agent (future direction)
 
-This is an architectural direction. Do not implement the full API now.
-
-An XR agent must not be merely a chat process that can send keystrokes
-to Android. It should understand and operate the spatial environment.
+An XR agent should understand and operate the spatial environment, not
+only send keystrokes to Android.
 
     SEMANTIC SCENE ACCESS FIRST.
     VISUAL PERCEPTION SECOND.
@@ -20,8 +18,7 @@ A spatial agent should query the scene directly. Conceptual API:
     scene.get(node_id)
     scene.query(type=..., app=..., visible=..., anchor=..., region=...)
 
-Per node, expose useful semantic information **where the backend has it**.
-Do not assume every property exists in every runtime.
+Per node, expose useful semantic information where the backend has it:
 
     id
     type
@@ -134,8 +131,7 @@ Loop:
       -> render again
       -> verify
 
-This is not WASD from screenshots. The semantic scene graph remains
-the primary ground truth.
+The semantic scene graph remains the primary ground truth.
 
 ## Spatial actions
 
@@ -175,5 +171,4 @@ Allow, later:
 - transaction / undo where feasible
 
 Spatial mutation needs the same seriousness as filesystem mutation.
-Do not design the permission model in this task; record it so we do
-not bolt permissions onto an omnipotent scene API later.
+Record a permission model before bolting one onto an omnipotent scene API.

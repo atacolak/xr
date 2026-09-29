@@ -3,12 +3,8 @@
 **NEXT ACTIVE FRONTIER: STARDUST XR**
 
 We are interested in Stardust because it is much closer to an actual
-spatial display server than UxSpace.
-
-Do **not** pretend Stardust can be installed as an Android Fold
-application. It is primarily a Linux/OpenXR architecture and experience
-to learn from. This file is exploration notes, not an install script.
-Do not start installation until a later task says so.
+spatial display server than UxSpace. It is primarily a Linux/OpenXR
+architecture and experience to learn from. This file is exploration notes.
 
 ## Pieces that matter
 

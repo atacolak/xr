@@ -5,8 +5,7 @@ Monado, with stereo presentation and tracked head pose, so that OpenXR
 applications (hello_xr, BeamNG's native Linux OpenXR mode) get a head and two
 eyes from the glasses.
 
-Explicitly *not* another virtual-desktop or head-anchoring implementation.
-Breezy/Stardust-style spatial displays are references, not the goal.
+Breezy/Stardust-style spatial displays are references.
 
 ```
   BeamNG / hello_xr
@@ -150,7 +149,5 @@ These are genuine consent boundaries, not iteration steps:
 2. Install the VITURE Linux SDK if it is not already on disk (the SDK itself
    stays untracked).
 
-## Not in scope
-
-No controllers, no hand tracking, no 6DoF before static stereo + 3DoF, no
-SteamVR, no BeamNG file edits, no fake hardcoded tracking presented as done.
+Milestones stay sequential: static stereo, then 3DoF, then 6DoF.
+No fake hardcoded tracking presented as done.

@@ -1,7 +1,6 @@
 # Next frontier
 
-Do not treat this list as an instruction to start the work in this file.
-It is the ordered exploration after UxSpace bring-up was preserved.
+Ordered exploration after UxSpace bring-up was preserved.
 
 ## NEXT FRONTIER
 

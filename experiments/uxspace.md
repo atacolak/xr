@@ -1,7 +1,7 @@
 # UxSpace experiment (postmortem)
 
-UxSpace is **not discarded**. It is a preserved experiment and reference
-implementation. Stop feature-polishing it from this workspace.
+Preserved experiment and reference implementation.
+Stop feature-polishing it from this workspace.
 
 - Fork: https://github.com/atacolak/uxspace
 - Preserved branch: `fold5-luma-ultra`

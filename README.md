@@ -11,8 +11,8 @@ The long-term hardware shape is:
 with voice and agents eventually reducing or eliminating the keyboard.
 
 This repo holds device knowledge, reusable development tooling, experiments,
-architecture notes, and integration contracts. Individual components stay in
-their own repositories. XR refers to them; it does not absorb them.
+architecture notes, and integration contracts. Independent components are
+listed in `components.toml`.
 
 ## What is here
 
@@ -26,7 +26,7 @@ their own repositories. XR refers to them; it does not absorb them.
 - `integrations/` — contracts with Voicecat, speech-core, and Herdr
 - `tools/herdr-launcher/` — tiny DeX-visible HERDR launcher APK
 - `fold-thinclient/` — existing Termux/WADB glue (preserved)
-- `console/` — small XR operational surfaces (field recorder, not a component dump)
+- `console/` — small XR operational surfaces (field recorder)
 - `console/recorder/` — Fold + Luma Ultra field recorder (`sh.colak.xrconsole.recorder`)
 
 ## Next frontier
@@ -36,9 +36,3 @@ See [NEXT.md](NEXT.md).
 Active line of work is now **`experiments/monado-viture/`**: presenting the Luma Ultra
 as a real OpenXR HMD through Monado on Linux, which is NEXT.md item 4 made concrete.
 Stardust XR remains the frontier after that.
-
-## Layout rule
-
-UxSpace, Voicecat, speech-core, Herdr, and OMP remain independent projects.
-This repository documents how XR uses them. `console/` is for tiny utilities
-that only exist for this glasses+Fold stack; it does not absorb those repos.

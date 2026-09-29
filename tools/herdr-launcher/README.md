@@ -2,9 +2,7 @@
 
 Tiny Android app whose only job is to appear as **HERDR** in the Samsung
 DeX Apps list and start an interactive Fold -> Mosh -> sfub -> Herdr
-session.
-
-It is not an agent harness. OMP stays on sfub.
+session. OMP stays on sfub.
 
 ## Package
 

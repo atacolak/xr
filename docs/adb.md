@@ -1,7 +1,6 @@
 # Wireless Debugging model
 
-This is development / power-user XR infrastructure on our own stock Fold.
-It is not a claim that production apps should embed ADB.
+Development / power-user XR infrastructure on this stock Fold.
 
 ## Why this exists
 
@@ -84,9 +83,8 @@ UxSpace's privileged helper:
 3. Connects with the app's ADB identity
 4. Starts a shell-UID helper and hands a Binder back
 
-Useful on this development Fold. Not a product requirement for every
-XR app. Keep the idea (device-local reconnect, preserved identity,
-shell bootstrap) even if UxSpace is not the long-term surface.
+Keep the idea (device-local reconnect, preserved identity, shell bootstrap)
+even if UxSpace is not the long-term surface.
 
 ## What `xrctl` should know
 

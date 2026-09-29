@@ -31,14 +31,12 @@ parameter, so the driver decides:
 - what panel geometry to declare to the compositor,
 - how to map the vendor pose into Monado's frames and flags.
 
-## What it deliberately is not
+## What it is not
 
 - No HID packet parser and no CRC handling. The comparable in-tree drivers
   (`xreal_air`, `rokid`) implement both, because for those glasses the IMU is
   raw and the host must fuse it (`m_imu_3dof`). VITURE hands us the fused pose.
 - No IMU fusion filter.
-- No new virtual-desktop or head-anchoring behaviour. That is a different
-  project and is explicitly out of scope.
 - No tracking claim we did not receive.
 
 ## Files

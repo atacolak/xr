@@ -1,7 +1,6 @@
 # speech-core (external)
 
-speech-core stays https://github.com/atacolak/speech-core
-(`/home/sf/workspace/speech-core`). XR does not vendor it.
+https://github.com/atacolak/speech-core (`/home/sf/workspace/speech-core`).
 
 ## What it provides to XR
 
@@ -12,7 +11,6 @@ behind Voicecat.
 
 Host units on sfub (see speech-core README): `ata-speech-core.service`,
 `ata-speech-out.service`, `ata-speech-tts.service`, optional aligner.
-Do not start parked `lab/` experiments from XR tasks.
 
 ## Interfaces XR cares about
 
@@ -27,5 +25,4 @@ are not issued from flickering partials.
 
 ## Owned by speech-core
 
-Models, daemons, protocol, TTS. Not Voicecat transport, not Herdr, not
-the XR compositor.
+Models, daemons, protocol, TTS.

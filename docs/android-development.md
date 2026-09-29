@@ -39,7 +39,7 @@ the same harness. `console/recorder/smoke.sh` builds, `xrctl deploy`s, auto-
 records ≥30s, pulls a sample, and ffprobes it. Do not ask the human to
 install that APK or paste logcat.
 
-`xrctl` does not build UxSpace or any other app. Wrappers may call it.
+Wrappers may call `xrctl`; project Gradle stays in the project.
 
 ## Diagnostics the agent should collect
 

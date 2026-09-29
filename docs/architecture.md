@@ -1,12 +1,8 @@
 # Architecture note
 
-This is the current **hypothesis**, not a final decision.
+Current hypothesis.
 
-The long-term system should not be conceptualized merely as:
-
-    "an Android app that draws floating Android windows."
-
-A more useful conceptual model:
+A useful conceptual model:
 
     hardware / OS substrate
             ↓
@@ -24,8 +20,8 @@ On the Fold, Android may remain the hardware/driver/application substrate.
 The user-facing environment above it can still become its own spatial
 computing surface.
 
-We are currently learning the abstractions. Do not lock implementation
-to Stardust, OpenXR, Android XR, UxSpace, or any other one runtime.
+Abstractions are still being learned. Implementation is not locked to one
+runtime.
 
 ## What UxSpace taught about this split
 
@@ -48,4 +44,4 @@ already treat "spatial desktop / compositor / scene" as the product.
 Human: Fold -> Mosh -> sfub -> OMP / Herdr
 Machine: sfub -> xrctl -> Fold Termux -> local adb -> Android
 
-Replaceable. Do not spread SSH hostnames through every XR project.
+Replaceable. SSH hostnames stay in local config, not in every XR project.

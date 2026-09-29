@@ -1,7 +1,6 @@
 # Voicecat (external)
 
-Voicecat stays https://github.com/atacolak/voicecat (`/home/sf/workspace/voicecat`).
-XR does not vendor it.
+https://github.com/atacolak/voicecat (`/home/sf/workspace/voicecat`).
 
 ## What it provides to XR
 
@@ -10,8 +9,7 @@ ear and mouth; a headed OMP TUI is the brain. Voicecat is the phone
 line between them.
 
 Long-term, voice is primary XR input for dictation, commands, and
-delegation. That consumption happens through this process, not by
-copying ASR into `xr`.
+delegation.
 
 ## How to run
 
@@ -39,5 +37,4 @@ Android.
 
 ## Owned by Voicecat
 
-Transport, PCM hop, collab guest, desk/phone route. Not VAD/ASR/TTS
-weights, not OMP session history, not the XR scene graph.
+Transport, PCM hop, collab guest, desk/phone route.

@@ -19,9 +19,8 @@ Requested and actual routes remain distinct in metadata. A missing explicit
 device blocks recording; disconnecting it stops the active recording rather
 than silently substituting another microphone.
 
-Stereo tracking cameras, pose, IMU, ASR, GPS, and annotation are out of
-scope. Timestamps use one monotonic origin (`elapsedRealtimeNanos`) so
-those streams can be added later without rewriting the architecture.
+Timestamps use one monotonic origin (`elapsedRealtimeNanos`) so later
+streams can share the same clock.
 
 The UI comes up even if the glasses path fails. Native camera code loads when
 the foreground 16:9 preview starts, or when recording starts if preview is not
@@ -64,11 +63,9 @@ not publish a megapixel rating.
 | Bus | USB 2.0 High-Speed (isochronous max-packet 5120). Typical FHD webcam ceiling. |
 
 `session.json` `camera_modes` records `sdk_stream`, every UVC video frame,
-still sizes, and `max_megapixels`. The dual grayscale tracking cameras are
-not this device and are not selectable here.
-
-Do not expect a higher-resolution RGB mode from a firmware tweak or a
-different SDK call. The hardware descriptor set matches the SDK lock.
+still sizes, and `max_megapixels`. Dual grayscale tracking cameras stay on
+the VITURE control USB and are not selectable here. The hardware descriptor
+set matches the SDK lock: MJPEG 1920×1080@30.
 
 Foreground service types: `camera|microphone|connectedDevice`. Recording
 survives UI background, fold, display off, DeX, Termux/Mosh. Notification

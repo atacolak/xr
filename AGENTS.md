@@ -1,14 +1,8 @@
 # XR workspace rules
 
-This is the control repository for XR work. It is not a monorepo for every
-XR-adjacent project. Keep independently useful software in its own repository
-and point at it from `components.toml` and `integrations/`.
-
-Do not resume UxSpace feature development from this workspace. UxSpace is a
-preserved experiment and reference implementation. See `experiments/uxspace.md`.
-
-Do not start Stardust installation, compositor work, hand tracking, or ASR
-unless the current task explicitly says to.
+Control repository for XR work. Independently useful software lives in its
+own repository and is pointed at from `components.toml` and `integrations/`.
+UxSpace is a preserved experiment (`experiments/uxspace.md`).
 
 `scripts/xrctl` is the machine-development channel to the Fold. Prefer it over
 ad-hoc SSH/ADB one-liners so transport assumptions stay in one place.
@@ -95,11 +89,9 @@ ad-hoc SSH/ADB one-liners so transport assumptions stay in one place.
 
 ## Console / recorder
 
-- `console/` is for small XR operational surfaces. Do not dump Voicecat,
-  speech-core, Herdr, or OMP into it.
+- `console/` is for small XR operational surfaces.
 - The field recorder package `sh.colak.xrconsole.recorder` is a durable
   identity (stable name + debug signing + `adb install -r`).
 - Load VITURE native code only when a recording starts. A failed glasses
   path must not kill process launch.
-- V1 records Luma Ultra front RGB + microphone only. Do not add tracking
-  cameras, pose, IMU, ASR, or annotation unless the task says so.
+- V1 records Luma Ultra front RGB + microphone.

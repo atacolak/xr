@@ -23,5 +23,4 @@ Uncertainties:
 - DeX desktop is a different display policy than the glasses Presentation.
   HERDR-in-DeX and glasses-as-display are not the same path.
 
-Do not document ephemeral display IDs as durable (`id=35` in one boot
-is not a contract).
+Ephemeral display IDs (`id=35` in one boot) are not a contract.
