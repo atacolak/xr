@@ -48,6 +48,7 @@ final class UvcModes {
 
     static final class Result {
         final List<Mode> hardware = new ArrayList<>();
+        final List<Mode> still = new ArrayList<>();
         final JSONArray interfaces = new JSONArray();
         String error = "";
         JSONObject json() {
@@ -57,24 +58,39 @@ final class UvcModes {
                 JSONArray modes = new JSONArray();
                 for (Mode m : hardware) modes.put(m.json());
                 o.put("uvc_frames", modes);
+                JSONArray stills = new JSONArray();
+                for (Mode m : still) stills.put(m.json());
+                o.put("uvc_still", stills);
+                Mode best = bestAny();
+                o.put("max_width", best != null ? best.width : 0);
+                o.put("max_height", best != null ? best.height : 0);
+                o.put("max_megapixels", best != null
+                        ? Math.round(best.width * best.height / 10_000.0) / 100.0 : 0);
                 o.put("usb_interfaces", interfaces);
                 if (!error.isEmpty()) o.put("probe_error", error);
             } catch (Exception ignored) {}
             return o;
         }
+        Mode bestAny() {
+            Mode best = null;
+            for (Mode m : hardware) if (best == null || better(m, best)) best = m;
+            for (Mode m : still) if (best == null || better(m, best)) best = m;
+            return best;
+        }
         String summary() {
             Mode bestMjpeg = null;
-            Mode bestAny = null;
             for (Mode m : hardware) {
-                if (bestAny == null || better(m, bestAny)) bestAny = m;
                 if ("MJPEG".equals(m.format) && (bestMjpeg == null || better(m, bestMjpeg))) bestMjpeg = m;
             }
-            if (bestAny == null) return SDK_FIXED + " · UVC frames not advertised";
-            boolean higher = bestAny.width * bestAny.height > 1920 * 1080
-                    || (bestAny.width * bestAny.height == 1920 * 1080 && bestAny.fps > 30.5f);
+            Mode best = bestAny();
+            if (best == null) return SDK_FIXED + " · UVC frames not advertised";
+            double mp = best.width * best.height / 1_000_000.0;
+            boolean higher = best.width * best.height > 1920 * 1080
+                    || (best.width * best.height == 1920 * 1080 && best.fps > 30.5f);
             String extra = higher
-                    ? ("UVC higher: " + bestAny.label())
-                    : ("UVC max " + (bestMjpeg != null ? bestMjpeg.label() : bestAny.label()) + ", no 4K/60");
+                    ? ("UVC higher: " + best.label())
+                    : String.format(Locale.US, "UVC max %s · %.2f MP capture, no 4K/60",
+                            bestMjpeg != null ? bestMjpeg.label() : best.label(), mp);
             return SDK_FIXED + " · " + extra;
         }
 
@@ -104,7 +120,9 @@ final class UvcModes {
             r.error = e.getMessage() != null ? e.getMessage() : "uvc probe failed";
             Log.w(TAG, "uvc probe", e);
         }
-        Log.i(TAG, "camera modes: " + r.summary() + " uvc_frames=" + r.hardware.size());
+        Log.i(TAG, "camera modes: " + r.summary()
+                + " uvc_frames=" + r.hardware.size()
+                + " uvc_still=" + r.still.size());
         return r;
     }
 
@@ -158,6 +176,15 @@ final class UvcModes {
                 if (subtype == 0x04) format = "YUY2";
                 else if (subtype == 0x06) format = "MJPEG";
                 else if (subtype == 0x10) format = "FRAME";
+                else if (subtype == 0x03 && len >= 6) {
+                    int nSizes = cfg[off + 4] & 0xff;
+                    int p = off + 5;
+                    for (int i = 0; i < nSizes && p + 4 <= off + len; i++, p += 4) {
+                        int w = u16(cfg, p);
+                        int h = u16(cfg, p + 2);
+                        if (w >= 160 && h >= 120) r.still.add(new Mode("STILL", w, h, 0));
+                    }
+                }
                 else if ((subtype == 0x05 || subtype == 0x07 || subtype == 0x11) && len >= 26) {
                     int w = u16(cfg, off + 5);
                     int h = u16(cfg, off + 7);

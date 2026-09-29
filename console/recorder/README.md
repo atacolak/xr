@@ -35,16 +35,34 @@ storage, **STOP**.
 
 The 16:9 viewer shows the live front RGB stream only while the activity is
 resumed. Backgrounding stops the preview camera immediately; an in-progress
-recording keeps encoding without updating the view.
-
-The VITURE camera SDK exposes a single stream: MJPEG 1920×1080@30. There is
-no API to select another resolution or framerate. On open, the recorder also
-parses USB Video Class frame descriptors and records whatever the hardware
-advertises under `camera_modes` in `session.json`.
+recording keeps encoding without updating the view. Hitting Record takes the
+USB camera from preview; idle preview can start again after stop.
 
 The app does not register as a USB default handler. Connecting glasses
 does not open a “choose an app for this USB device” prompt. Presence is
 observed from the live USB device list.
+
+## RGB camera limits (measured)
+
+This is a **2.07 MP / 1080p** camera as far as software can see. VITURE does
+not publish a megapixel rating.
+
+| | |
+|---|---|
+| USB | Sonix `vid=0x0C45 pid=0x636B`, product string `USB 2.0 Camera` |
+| SDK stream | **MJPEG 1920×1080@30 only.** `xr_camera_provider_start` has no mode API. |
+| UVC video max | MJPEG 1920×1080@30; also 1280×1024 / 960 / 720, 800×600, VGA and smaller at 5–30 fps |
+| UVC uncompressed | YUY2 1920×1080@**5** fps; 1280×720@10 fps. Not useful for field capture. |
+| UVC still-image max | 1920×1080 (same 2.07 MP). No higher still size. |
+| Not advertised | nothing above 1080p, nothing above 30 fps, no 4K, no 60 fps |
+| Bus | USB 2.0 High-Speed (isochronous max-packet 5120). Typical FHD webcam ceiling. |
+
+`session.json` `camera_modes` records `sdk_stream`, every UVC video frame,
+still sizes, and `max_megapixels`. The dual grayscale tracking cameras are
+not this device and are not selectable here.
+
+Do not expect a higher-resolution RGB mode from a firmware tweak or a
+different SDK call. The hardware descriptor set matches the SDK lock.
 
 Foreground service types: `camera|microphone|connectedDevice`. Recording
 survives UI background, fold, display off, DeX, Termux/Mosh. Notification
@@ -104,10 +122,9 @@ measured bitrate / MB-min / GB-hour / fps. `events.jsonl` records route changes.
 
 Measured on the Fold with attached Luma Ultra, 2026-09-29:
 
-- front RGB: MJPEG 1920×1080, hardware HEVC, 29.04–29.12 measured fps
-- USB Video Class descriptors advertise MJPEG up to 1920×1080@30 and many
-  smaller modes (1280×1024 down to 160×120, 5–30 fps). YUY2 at 1080p is 5 fps.
-  Nothing above 1080p or 30 fps. The SDK still streams only 1920×1080@30 MJPEG.
+- front RGB: **2.07 MP** capture (1920×1080). SDK MJPEG 1920×1080@30, hardware
+  HEVC, 29.04–29.12 measured fps on the 35s run. UVC still-image max is also
+  1080p. No higher mode exists on this unit.
 - 35.3-second auto-route run: 1,020 frames in, 1,018 encoded, 1 dropped
 - measured output: approximately 13.44 Mbps, 90.05 MB/min, 5.28 GB/hour
 - two reduced-duration rollover segments independently contain HEVC + AAC

@@ -24,8 +24,22 @@ port you saw in one session as durable.
 - Observed product IDs on this unit: `0x1104` (tracking/control, preferred)
   and `0x1102` (second VITURE interface). Luma Ultra also documents `0x1101`.
 - Front RGB camera USB on this unit: vendor `0x0C45` product `0x636B`
-  (Sonix UVC; VITURE SDK `xr_camera_provider`, MJPEG 1920×1080@30).
+  (Sonix Technology “USB 2.0 Camera”; VITURE SDK `xr_camera_provider`).
   Verified via Fold `lsusb` 2026-09-27. This is not the phone camera.
+- **RGB capture megapixels (measured, not marketed):** **2.07 MP**.
+  VITURE does not publish a sensor MP rating, FOV, or part number. On this
+  unit the USB Video Class descriptors advertise both video and still-image
+  sizes up to **1920×1080** and nothing larger (no 2K/4K, no 5/8/12 MP still).
+  The Android SDK stream is fixed at MJPEG 1920×1080@30. USB isochronous
+  max-packet 5120 is USB 2.0 High-Speed, the usual ceiling for this Sonix
+  FHD webcam-controller family (`0x0C45:0x636B` also appears on generic
+  “1080P USB 2.0 Camera” products). Usable capture is therefore 1080p /
+  ~2 MP. Sensor silicon could in principle be a higher-res die that is only
+  exposed at 1080p; nothing on the bus, in the SDK, or in public specs
+  supports that claim.
+- Dual grayscale tracking cameras are **not** Android UVC inputs. They stay
+  on the VITURE control USB (`0x35CA:0x1104`) for Carina/6DoF. Do not invent
+  an RGB path through them.
 - Native SDK used during UxSpace bring-up: **libglasses 2.4.0**
   (proprietary; untracked; download from VITURE developer portal).
 
