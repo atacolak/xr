@@ -408,9 +408,14 @@ cmd_pull() {
   mkdir -p "$(dirname "$dest")"
   local serial
   serial="$(pick_serial)" || die "no adb device"
-  # Binary-safe: Fold-local adb exec-out -> ssh stdout -> local file.
+  # Binary-safe. App-specific external files are not shell-readable on current
+  # Android, but run-as can read them using the package inferred from the path.
+  local reader="cat $(printf '%q' "$remote")"
+  if [[ "$remote" =~ /Android/data/([^/]+)/ ]]; then
+    reader="run-as $(printf '%q' "${BASH_REMATCH[1]}") cat $(printf '%q' "$remote")"
+  fi
   ssh "${SSH_OPTS[@]}" "$XRCTL_SSH_HOST" \
-    "$REMOTE_ENV adb -s $(printf '%q' "$serial") exec-out cat $(printf '%q' "$remote")" \
+    "$REMOTE_ENV adb -s $(printf '%q' "$serial") exec-out $reader" \
     >"$dest"
   if [ ! -s "$dest" ]; then
     die "pull empty: $remote"

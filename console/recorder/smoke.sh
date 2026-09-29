@@ -8,12 +8,16 @@ XRCTL="$XR/scripts/xrctl"
 PKG=sh.colak.xrconsole.recorder
 DURATION_S="${DURATION_S:-35}"
 SEGMENT_S="${SEGMENT_S:-20}"
+MIC_PRODUCT="${MIC_PRODUCT:-}"
+MIC_TYPE="${MIC_TYPE:--1}"
 export JAVA_HOME="${JAVA_HOME:-$HOME/.local/opt/jdk}"
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$HOME/.local/opt/android-sdk}}"
 export PATH="$JAVA_HOME/bin:$PATH"
 
 OUT="${XRCTL_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/xrctl}/recorder-smoke"
 mkdir -p "$OUT"
+rm -f "$OUT"/segment-*.mp4 "$OUT"/sample.mp4 "$OUT"/session.json \
+  "$OUT"/events.jsonl "$OUT"/ffprobe.json "$OUT"/mp4-list.txt
 
 "$ROOT/build.sh"
 APK="$ROOT/build/outputs/apk/debug/xr-console-recorder-debug.apk"
@@ -28,9 +32,11 @@ echo "[smoke] logcat -c, launch SMOKE duration=${DURATION_S}s segment=${SEGMENT_
 "$XRCTL" adb shell logcat -c >/dev/null 2>&1 || true
 "$XRCTL" adb shell am force-stop "$PKG" >/dev/null 2>&1 || true
 sleep 1
+SMOKE_ARGS=(--ei duration_s "$DURATION_S" --ei segment_s "$SEGMENT_S")
+if [ -n "$MIC_PRODUCT" ]; then SMOKE_ARGS+=(--es mic_product "$MIC_PRODUCT"); fi
+if [ "$MIC_TYPE" -ge 0 ]; then SMOKE_ARGS+=(--ei mic_type "$MIC_TYPE"); fi
 "$XRCTL" adb shell am start -W -n "$PKG/.MainActivity" \
-  -a "$PKG.SMOKE" --ei duration_s "$DURATION_S" --ei segment_s "$SEGMENT_S" \
-  | tee "$OUT/launch.txt"
+  -a "$PKG.SMOKE" "${SMOKE_ARGS[@]}" | tee "$OUT/launch.txt"
 
 WAIT=$((DURATION_S + 25))
 echo "[smoke] waiting ${WAIT}s for record+finalize"
@@ -62,14 +68,15 @@ if [ -n "$SESSION_DIR" ]; then
   "$XRCTL" pull "$SESSION_DIR/session.json" "$OUT/session.json" || true
   "$XRCTL" pull "$SESSION_DIR/events.jsonl" "$OUT/events.jsonl" || true
   "$XRCTL" adb shell ls "$SESSION_DIR" | tr -d '\r' \
-    | python3 -c 'import sys; print("\\n".join(x for x in sys.stdin.read().splitlines() if x.endswith(".mp4")))' \
+    | python3 -c 'import sys; print("\n".join(x for x in sys.stdin.read().splitlines() if x.endswith(".mp4")))' \
     >"$OUT/mp4-list.txt"
   index=0
-  while IFS= read -r mp4; do
+  mapfile -t mp4s <"$OUT/mp4-list.txt"
+  for mp4 in "${mp4s[@]}"; do
     [ -n "$mp4" ] || continue
     "$XRCTL" pull "$SESSION_DIR/$mp4" "$OUT/segment-$(printf '%03d' "$index").mp4" || true
     index=$((index + 1))
-  done <"$OUT/mp4-list.txt"
+  done
   if [ -f "$OUT/segment-000.mp4" ]; then
     cp "$OUT/segment-000.mp4" "$OUT/sample.mp4"
   fi

@@ -83,16 +83,23 @@ public final class MainActivity extends Activity implements RecState.Listener {
         h.post(tick);
     }
 
-    @Override protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleIntent(intent);
-    }
-
     private void handleIntent(Intent intent) {
         if (intent == null) return;
         if (ACTION_SMOKE.equals(intent.getAction()) || intent.getBooleanExtra("auto_record", false)) {
             smoke = true;
+            String micProduct = intent.getStringExtra("mic_product");
+            int micType = intent.getIntExtra("mic_type", -1);
+            if ((micProduct != null && !micProduct.isEmpty()) || micType >= 0) {
+                try {
+                    MicrophoneDevices.Choice choice =
+                            MicrophoneDevices.selectForSmoke(this, micProduct, micType);
+                    RecState.I.micSelection = choice.label;
+                    refreshMicrophones();
+                } catch (Exception e) {
+                    RecState.I.fail(e.getMessage());
+                    return;
+                }
+            }
             int segS = intent.getIntExtra("segment_s", 0);
             int durS = intent.getIntExtra("duration_s", 35);
             if (segS > 0) smokeSegMs = segS * 1000L;

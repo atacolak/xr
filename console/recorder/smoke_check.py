@@ -75,9 +75,17 @@ if mp4.is_file():
         if a:
             print("audio", a.get("codec_name"), a.get("sample_rate"), a.get("channels"))
             need(a.get("codec_name") in ("aac",), f"audio codec {a.get('codec_name')}")
-        dur = float((info.get("format") or {}).get("duration") or 0)
-        need(dur >= 25, f"duration {dur:.2f}s")
-        print("duration", dur)
+        first_dur = float((info.get("format") or {}).get("duration") or 0)
+        total_dur = 0.0
+        for segment in segments:
+            duration_probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(segment)],
+                capture_output=True, text=True)
+            if duration_probe.returncode == 0:
+                total_dur += float(duration_probe.stdout.strip() or 0)
+        need(total_dur >= 25, f"total segment duration {total_dur:.2f}s")
+        print("first_segment_duration", first_dur, "total_segment_duration", total_dur)
     except Exception as e:
         need(False, f"ffprobe parse {e}")
 logp = out / "xrr.txt"

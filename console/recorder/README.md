@@ -74,11 +74,24 @@ replug just because an attach callback was missed.
 actual routed devices, route-match status, PCM sample count, peak and RMS, and
 measured bitrate / MB-min / GB-hour / fps. `events.jsonl` records route changes.
 
-As of 2026-09-29 the current APK builds, but the active hardware verification
-run is blocked before ADB because the Fold Termux SSH endpoint is unreachable
-from sfub (`No route to host`). Consequently the target codec/fps/bitrate,
-Luma microphone exposure, segmentation, background survival, and 30-second
-capture remain unverified; do not treat configured targets as measurements.
+Measured on the Fold with attached Luma Ultra, 2026-09-29:
+
+- front RGB: MJPEG 1920×1080, hardware HEVC, 29.04–29.12 measured fps
+- 35.3-second auto-route run: 1,020 frames in, 1,018 encoded, 1 dropped
+- measured output: approximately 13.44 Mbps, 90.05 MB/min, 5.28 GB/hour
+- two reduced-duration rollover segments independently contain HEVC + AAC
+- Auto routed to `USB-Audio - VITURE Microphone`
+- explicit VITURE USB mic matched the requested route and captured nonzero PCM,
+  but its observed level was extremely low (peak 3, RMS 1.02)
+- explicit Fold rear built-in mic matched and captured strong nonzero PCM
+  (peak 32768, RMS 883.18)
+- DJI Mic Mini enumerates as classic Bluetooth SCO. Preferred-device routing
+  alone produced digital silence; modern communication routing was rejected;
+  Samsung fallback SCO activation timed out. DJI validation remains open.
+
+Output currently lives in the app-specific external Movies directory because
+Android 16 scoped storage rejects direct `FileOutputStream` writes to public
+Movies. `scripts/xrctl pull` handles that path through `run-as`.
 
 ## Development
 

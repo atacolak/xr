@@ -1,6 +1,9 @@
 package sh.colak.xrconsole.recorder;
 
 import android.content.Context;
+import android.content.BroadcastReceiver;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.media.AudioDeviceCallback;
 import android.media.AudioDeviceInfo;
 import android.media.AudioFormat;
@@ -17,6 +20,8 @@ import android.util.Log;
 import org.json.JSONObject;
 
 import java.nio.ByteBuffer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 final class AudioCapture {
     static final String TAG = "XRRecorder";
@@ -45,6 +50,7 @@ final class AudioCapture {
     private long pcmSamples;
     private double pcmSumSquares;
     private int pcmPeak;
+    private boolean legacySco;
 
     AudioCapture(Context ctx, Sink sink, long originMonoNs, MicrophoneDevices.Choice requested) {
         this.ctx = ctx.getApplicationContext();
@@ -75,6 +81,14 @@ final class AudioCapture {
             }
         }
         am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        if (!requested.isAuto() && requested.device != null
+                && requested.device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+            boolean communicationSet = Build.VERSION.SDK_INT >= 31
+                    && am.setCommunicationDevice(requested.device);
+            if (!communicationSet) {
+                startLegacySco();
+            }
+        }
         codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
         MediaFormat fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, CHANNELS);
         fmt.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
@@ -137,8 +151,7 @@ final class AudioCapture {
             o.put("requested_device", requested.identity != null ? requested.identity : JSONObject.NULL);
             o.put("actual_routed_device", actual);
             o.put("route_matches_request", requested.isAuto()
-                    || MicrophoneDevices.sameDevice(requested.identity, record != null ? record.getRoutedDevice() : null));
-            o.put("reason", reason);
+                    || MicrophoneDevices.sameIdentity(requested.identity, actual));
         } catch (Exception ignored) {}
         return o;
     }
@@ -217,6 +230,35 @@ final class AudioCapture {
         }
     }
 
+    @SuppressWarnings("deprecation")
+    private void startLegacySco() throws Exception {
+        CountDownLatch connected = new CountDownLatch(1);
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                if (intent != null
+                        && intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, -1)
+                        == AudioManager.SCO_AUDIO_STATE_CONNECTED) {
+                    connected.countDown();
+                }
+            }
+        };
+        ctx.registerReceiver(receiver,
+                new IntentFilter(AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED),
+                Context.RECEIVER_NOT_EXPORTED);
+        try {
+            am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            am.startBluetoothSco();
+            if (!connected.await(5, TimeUnit.SECONDS)) {
+                am.stopBluetoothSco();
+                am.setMode(AudioManager.MODE_NORMAL);
+                throw new IllegalStateException("Bluetooth SCO did not connect: " + requested.label);
+            }
+            legacySco = true;
+        } finally {
+            try { ctx.unregisterReceiver(receiver); } catch (Exception ignored) {}
+        }
+    }
+
     private void drain(MediaCodec.BufferInfo info, boolean eos) {
         if (eos) {
             int inIx = codec.dequeueInputBuffer(50_000);
@@ -247,6 +289,17 @@ final class AudioCapture {
         thread = null;
         if (t != null) {
             try { t.join(1500); } catch (InterruptedException ignored) {}
+        }
+        if (!requested.isAuto() && requested.device != null
+                && requested.device.getType() == AudioDeviceInfo.TYPE_BLUETOOTH_SCO) {
+            try {
+                if (legacySco && am != null) {
+                    am.stopBluetoothSco();
+                    am.setMode(AudioManager.MODE_NORMAL);
+                } else if (Build.VERSION.SDK_INT >= 31 && am != null) {
+                    am.clearCommunicationDevice();
+                }
+            } catch (Exception ignored) {}
         }
         try { if (am != null) am.unregisterAudioDeviceCallback(cb); } catch (Exception ignored) {}
         try { if (record != null) record.stop(); } catch (Exception ignored) {}

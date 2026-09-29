@@ -82,6 +82,21 @@ final class MicrophoneDevices {
         e.apply();
     }
 
+
+    static Choice selectForSmoke(Context ctx, String product, int type) {
+        for (Choice choice : enumerate(ctx)) {
+            if (choice.isAuto() || choice.device == null) continue;
+            boolean productMatches = product == null || product.isEmpty()
+                    || product.equals(choice.identity.optString("product"));
+            boolean typeMatches = type < 0 || type == choice.identity.optInt("type", -1);
+            if (productMatches && typeMatches) {
+                persist(ctx, choice);
+                return choice;
+            }
+        }
+        throw new IllegalStateException("smoke microphone unavailable: product="
+                + product + " type=" + type);
+    }
     static JSONObject describe(AudioDeviceInfo d) {
         JSONObject o = new JSONObject();
         try {
@@ -125,6 +140,14 @@ final class MicrophoneDevices {
         String raw = prefs(ctx).getString(PREF_MIC + "_identity", null);
         if (raw == null) return null;
         try { return new JSONObject(raw); } catch (Exception ignored) { return null; }
+    }
+
+    static boolean sameIdentity(JSONObject expected, JSONObject got) {
+        if (expected == null || got == null) return false;
+        return expected.optInt("type", -1) == got.optInt("type", -2)
+                && expected.optString("product").equals(got.optString("product"))
+                && stableAddress(expected.optString("address"))
+                .equals(stableAddress(got.optString("address")));
     }
 
     private static String key(JSONObject o) {
