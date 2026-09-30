@@ -96,6 +96,7 @@ escaping symlinks, and tracked Android/SDK binaries.
 - `console/` is for small XR operational surfaces.
 - The field recorder package `sh.colak.xrconsole.recorder` is a durable
   identity (stable name + debug signing + `adb install -r`).
-- Load VITURE native code only when a recording starts. A failed glasses
-  path must not kill process launch.
-- V1 records Luma Ultra front RGB + microphone.
+- Load VITURE native code only when a preview or recording starts. A failed
+  glasses path must not kill process launch.
+- V1 records Luma Ultra front RGB + microphone. Idle preview may also show
+  Carina grayscale tracking cameras (L / R / L|R); those are not in the MP4.

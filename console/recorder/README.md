@@ -2,13 +2,27 @@
 
 Package: `sh.colak.xrconsole.recorder`
 
-![live Luma Ultra RGB preview in XR field recorder on Fold DeX](docs/ui.png)
+Idle preview cycles four live views. Recording is still RGB + one mic.
 
-V1 records **only**:
+![front RGB 1920×1080](docs/rgb.png)
+
+![Carina left grayscale 640×480](docs/l-gray.png)
+
+![Carina right grayscale 640×480](docs/r-gray.png)
+
+![Carina L|R side-by-side](docs/lr.png)
+
+V1 **records** only:
 
 1. VITURE Luma Ultra **front RGB** camera — measured **2.07 MP / 1080p**,
    SDK MJPEG 1920×1080@30. Nothing higher is advertised.
 2. One selected Android audio input, encoded as AAC 48 kHz mono
+
+Idle **preview** also opens the two Carina grayscale tracking cameras on
+glasses control USB `0x35CA:0x1104` (not UVC): **L GRAY**, **R GRAY**, or
+**L|R** side-by-side. Measured **640×480** L0+R0 at ~25 Hz, with pose / IMU /
+vsync on the same handle. They look more downward than RGB. Preview-only —
+they are not muxed into the MP4 yet.
 
 The microphone selector enumerates capture-capable Android inputs: built-in
 mics, USB, wired headset, Bluetooth SCO/LE. Telephony RX, remote submix, and
@@ -22,22 +36,24 @@ than silently substituting another microphone.
 Timestamps use one monotonic origin (`elapsedRealtimeNanos`) so later
 streams can share the same clock.
 
-The UI comes up even if the glasses path fails. Native camera code loads when
-the foreground 16:9 preview starts, or when recording starts if preview is not
-running.
+The UI comes up even if the glasses path fails. Native RGB code loads when
+the foreground preview starts, or when recording starts if preview is not
+running. Carina native code loads only on a grayscale preview.
 
 ## Operation
 
-Idle: edge-to-edge RGB preview (foreground only) with overlay chrome —
-timer, glasses status dot, gear, **RECORD**. Recording: **● REC**, timer,
+Idle: edge-to-edge preview (foreground only) with overlay chrome — timer,
+glasses status dot, gear, **RECORD**, and a camera-source label. Tap the
+label to cycle **RGB → L GRAY → R GRAY → L|R**. Recording: **● REC**, timer,
 **STOP**. RECORD is dimmed until an RGB camera is connected.
 
-The preview fills the content area. Timer / glasses-dot / gear / RECORD|STOP
-sit on a bottom scrim. RECORD and STOP share one text-sized hit box so the
-label swap does not jump. Backgrounding stops the preview camera immediately;
-an in-progress recording keeps encoding without updating the view. Hitting
-Record takes the USB camera from preview; idle preview can start again after
-stop. Resizing the DeX window keeps the preview filling the content area.
+RGB uses `CENTER_CROP` (16:9 fill). Grayscale uses `FIT_CENTER` so stretching
+the DeX window letterboxes both 4:3 eyes instead of clipping them. Timer /
+glasses-dot / gear / RECORD|STOP sit on a bottom scrim. RECORD and STOP share
+one text-sized hit box so the label swap does not jump. Backgrounding stops
+the preview camera immediately; an in-progress recording keeps encoding
+without updating the view. Hitting Record takes the USB RGB camera from
+preview; idle preview can start again after stop.
 
 A green status dot = RGB ready, dim = missing. Microphone choice lives under
 the gear as a one-line settings popup. Requested vs routed mic still lands in
@@ -45,7 +61,8 @@ the gear as a one-line settings popup. Requested vs routed mic still lands in
 
 The app does not register as a USB default handler. Connecting glasses
 does not open a “choose an app for this USB device” prompt. Presence is
-observed from the live USB device list.
+observed from the live USB device list. First grayscale open may still
+request USB permission for the glasses control interface.
 
 ## RGB camera limits (measured)
 
@@ -64,7 +81,8 @@ not publish a megapixel rating.
 
 `session.json` `camera_modes` records `sdk_stream`, every UVC video frame,
 still sizes, and `max_megapixels`. Dual grayscale tracking cameras stay on
-the VITURE control USB and are not selectable here. The hardware descriptor
+the VITURE control USB (`0x35CA:0x1104`) and are preview-only here (L GRAY /
+R GRAY / L|R). They are not muxed into the recorded MP4. The RGB descriptor
 set matches the SDK lock: MJPEG 1920×1080@30.
 
 Foreground service types: `camera|microphone|connectedDevice`. Recording
@@ -107,9 +125,10 @@ encoder running and starts the next MP4 on a keyframe.
 Runtime (grant once): `CAMERA`, `RECORD_AUDIO`, `POST_NOTIFICATIONS`.
 
 USB: permission is requested when the foreground preview or a recording
-opens the RGB camera, not by registering as a USB default app. Already-attached
-glasses are claimed from the live device list; do not replug just because an
-attach callback was missed.
+opens a USB device, not by registering as a USB default app. RGB is Sonix
+`0x0C45:0x636B`. Grayscale is glasses control `0x35CA:0x1104` (first open
+may prompt). Already-attached glasses are claimed from the live device list;
+do not replug just because an attach callback was missed.
 
 ## Codec / bitrate
 

@@ -7,11 +7,13 @@ Hardware shape: glasses + phone + optional small physical input + power bank.
 
 ## Camera tool
 
-[**XR field recorder**](console/recorder/) — live 16:9 viewer + record of the
+[**XR field recorder**](console/recorder/) — live viewer + record of the
 VITURE Luma Ultra front RGB (measured **1080p / 2.07 MP**) and a selectable
-microphone. Package `sh.colak.xrconsole.recorder`.
+microphone. Preview also cycles the two Carina grayscale tracking cameras
+(measured **640×480** each, or **L|R** side-by-side). Package
+`sh.colak.xrconsole.recorder`.
 
-[![live Luma Ultra RGB preview in XR field recorder on Fold DeX](console/recorder/docs/ui.png)](console/recorder/)
+[![Luma Ultra L|R grayscale tracking cameras in XR field recorder on Fold DeX](console/recorder/docs/ui.png)](console/recorder/)
 
 Try it:
 

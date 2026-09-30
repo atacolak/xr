@@ -37,8 +37,12 @@ port you saw in one session as durable.
   ~2 MP. Sensor silicon could in principle be a higher-res die that is only
   exposed at 1080p; nothing on the bus, in the SDK, or in public specs
   supports that claim.
-- Dual grayscale tracking cameras stay on the VITURE control USB
-  (`0x35CA:0x1104`) for Carina/6DoF; they are not Android UVC RGB inputs.
+- Dual grayscale tracking cameras sit on the VITURE control USB
+  (`0x35CA:0x1104`) and arrive through Carina (`XRCameraCallback`), not UVC.
+  Measured on this unit 2026-09-30: **640×480** L0+R0 at ~25 Hz, plus pose
+  (~25 Hz), IMU (~1 kHz), and a ~60 Hz vsync tick on the same device handle.
+  They look more downward than the front RGB; usable for lap-height hands.
+  Preview in the field recorder: RGB / L GRAY / R GRAY / L|R.
 - Native SDK used during UxSpace bring-up: **libglasses 2.4.0**
   (proprietary; untracked; download from VITURE developer portal).
 
