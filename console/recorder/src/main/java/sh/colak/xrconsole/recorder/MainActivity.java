@@ -367,6 +367,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override protected void onResume() {
         super.onResume();
         refreshPresence();
+        applyPreviewFit();
         RgbPreview.attach(this, preview);
         GrayPreview.attach(this, preview);
         render();
@@ -382,9 +383,19 @@ public final class MainActivity extends Activity implements RecState.Listener {
     private void cyclePreview() {
         RecState.I.previewSource = RecState.I.previewSource.next();
         RecState.I.grayInfo = "";
+        applyPreviewFit();
         RgbPreview.sync(this);
         GrayPreview.sync(this);
         render();
+    }
+
+    private void applyPreviewFit() {
+        if (preview == null) return;
+        boolean gray = RecState.I.previewSource.isGray();
+        preview.setScaleType(gray
+                ? ImageView.ScaleType.FIT_CENTER
+                : ImageView.ScaleType.CENTER_CROP);
+        preview.setContentDescription(RecState.I.previewSource.label);
     }
 
     private void refreshPresence() {

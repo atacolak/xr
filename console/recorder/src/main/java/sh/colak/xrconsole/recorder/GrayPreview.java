@@ -172,9 +172,14 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
         RecState.I.width = width;
         RecState.I.height = height;
         PreviewSource src = RecState.I.previewSource;
-        byte[] plane = src == PreviewSource.GRAY_RIGHT
-                ? firstNonEmpty(right0, right1, left0, left1)
-                : firstNonEmpty(left0, left1, right0, right1);
+        byte[] left = firstNonEmpty(left0, left1, right0, right1);
+        byte[] right = firstNonEmpty(right0, right1, left0, left1);
+        if (src.isStereo()) {
+            if (left == null && right == null) return;
+            offerStereo(left, right, width, height);
+            return;
+        }
+        byte[] plane = src == PreviewSource.GRAY_RIGHT ? right : left;
         if (plane == null) return;
         offerGray(plane, width, height);
     }
@@ -211,10 +216,43 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
             int g = gray[i] & 0xff;
             px[i] = 0xFF000000 | (g << 16) | (g << 8) | g;
         }
+        postBitmap(px, width, Math.min(height, n / Math.max(width, 1)));
+    }
+
+    static void offerStereo(byte[] left, byte[] right, int width, int height) {
+        if (!wantFrames || width <= 0 || height <= 0) return;
+        ImageView v = sink;
+        if (v == null) return;
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastPreviewMs < MIN_FRAME_MS) return;
+        lastPreviewMs = now;
+        int dstW = width * 2;
+        int n = dstW * height;
+        int[] px = pixels;
+        if (px == null || px.length < n) {
+            px = new int[n];
+            pixels = px;
+        }
+        for (int y = 0; y < height; y++) {
+            int src = y * width;
+            int dst = y * dstW;
+            for (int x = 0; x < width; x++) {
+                int li = src + x;
+                int gl = (left != null && li < left.length) ? (left[li] & 0xff) : 0;
+                int gr = (right != null && li < right.length) ? (right[li] & 0xff) : 0;
+                px[dst + x] = 0xFF000000 | (gl << 16) | (gl << 8) | gl;
+                px[dst + width + x] = 0xFF000000 | (gr << 16) | (gr << 8) | gr;
+            }
+        }
+        postBitmap(px, dstW, height);
+    }
+
+    private static void postBitmap(int[] px, int width, int height) {
+        if (width <= 0 || height <= 0) return;
         Bitmap bmp;
         try {
             bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
-            bmp.setPixels(px, 0, width, 0, 0, width, Math.min(height, n / width));
+            bmp.setPixels(px, 0, width, 0, 0, width, height);
         } catch (Exception e) {
             return;
         }
@@ -226,6 +264,7 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
             }
             Bitmap old = shown;
             shown = bmp;
+            view.setScaleType(ImageView.ScaleType.FIT_CENTER);
             view.setImageBitmap(bmp);
             view.setBackgroundColor(Color.BLACK);
             if (old != null && old != bmp) old.recycle();
