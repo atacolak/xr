@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- VITURE glasses control USB 0x35CA; matches Luma Ultra 0x1104/0x1102/0x1101. -->
+    <usb-device vendor-id="13770" />
+    <!-- Sonix Luma RGB UVC 0x0C45:0x636B -->
+    <usb-device vendor-id="3141" product-id="25451" />
+</resources>
