@@ -16,6 +16,8 @@ final class NativeCarina {
 
     static synchronized boolean load() {
         if (loaded) return true;
+        NativeRgbCamera.loadOptional("cloud_protocol");
+        NativeRgbCamera.loadOptional("carina_vio");
         if (!NativeRgbCamera.load()) {
             loadError = NativeRgbCamera.loadError();
             return false;
@@ -39,4 +41,6 @@ final class NativeCarina {
     static native int nativeDeviceType();
     static native int nativeStart();
     static native void nativeDestroy();
+    /** cam, pose, imu, vsync counts since nativeCreate. */
+    static native int[] nativeStats();
 }

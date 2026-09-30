@@ -20,6 +20,11 @@ final class NativeRgbCamera {
 
     static synchronized boolean load() {
         if (loaded) return true;
+        // libglasses dladdr-locates sibling libcarina_vio.so at load time.
+        // UxSpace preloads cloud_protocol then carina_vio first; if we skip
+        // that, RGB-first preview makes stereo cameras a silent no-op.
+        loadOptional("cloud_protocol");
+        loadOptional("carina_vio");
         try {
             System.loadLibrary("camera_bridge");
             version = nativeVersion();
@@ -30,6 +35,15 @@ final class NativeRgbCamera {
             loadError = e.getMessage();
             Log.e(TAG, "native load failed", e);
             return false;
+        }
+    }
+
+    static void loadOptional(String name) {
+        try {
+            System.loadLibrary(name);
+            Log.i(TAG, "loaded " + name);
+        } catch (UnsatisfiedLinkError e) {
+            Log.w(TAG, "optional native " + name + " missing: " + e.getMessage());
         }
     }
 

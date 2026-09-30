@@ -29,6 +29,21 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
     private UsbDevice glassesDev;
     private UsbDeviceConnection glassesConn;
     private volatile boolean running;
+    private volatile boolean waitingPerm;
+
+    private final Runnable statsTick = new Runnable() {
+        @Override public void run() {
+            if (!running) return;
+            int[] s = NativeCarina.nativeStats();
+            if (s != null && s.length >= 4) {
+                RecState.I.grayInfo = "cam=" + s[0] + " pose=" + s[1]
+                        + " imu=" + s[2] + " vsync=" + s[3]
+                        + " " + RecState.I.width + "x" + RecState.I.height;
+                RecState.I.ping();
+            }
+            MAIN.postDelayed(this, 1000);
+        }
+    };
 
     static void attach(Context ctx, ImageView view) {
         sink = view;
@@ -39,11 +54,21 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
     static void detach() {
         wantFrames = false;
         sink = null;
+        GrayPreview session;
+        synchronized (LOCK) { session = idle; }
+        // USB permission dialog pauses the activity. Keep the application-context
+        // receiver so the grant is not dropped; close if we were already streaming.
+        if (session != null && session.waitingPerm) return;
         stopIdle();
     }
 
     static void sync(Context ctx) {
         if (!wantFrames || !RecState.I.previewSource.isGray() || !RecState.I.glassesPresent) {
+            GrayPreview session;
+            synchronized (LOCK) { session = idle; }
+            if (session != null && session.waitingPerm && RecState.I.previewSource.isGray()) {
+                return;
+            }
             stopIdle();
             return;
         }
@@ -95,6 +120,11 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
                 return;
             }
             running = true;
+            if (!usb.hasPermission(glassesDev)) {
+                waitingPerm = true;
+                RecState.I.grayInfo = "glasses USB permission needed";
+                RecState.I.ping();
+            }
             usb.open(glassesDev);
         } catch (Exception e) {
             Log.w(TAG, "gray preview open", e);
@@ -103,6 +133,7 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
     }
 
     @Override public void onUsbOpened(UsbDevice device, UsbDeviceConnection connection) {
+        waitingPerm = false;
         if (!running || glassesDev == null || device.getDeviceId() != glassesDev.getDeviceId()) return;
         glassesConn = connection;
         if (!NativeCarina.nativeCreate(device.getProductId(), connection.getFileDescriptor(), this)) {
@@ -123,10 +154,12 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
             RecState.I.grayInfo = "Carina streaming type=" + type;
             RecState.I.ping();
             Log.i(TAG, "gray preview streaming " + UsbHost.describe(device) + " type=" + type);
+            MAIN.post(statsTick);
         }
     }
 
     @Override public void onUsbDenied(UsbDevice device) {
+        waitingPerm = false;
         Log.w(TAG, "gray preview USB denied for " + UsbHost.describe(device));
         RecState.I.grayInfo = "glasses USB permission needed";
         RecState.I.ping();
@@ -201,6 +234,8 @@ final class GrayPreview implements NativeCarina.Listener, UsbHost.Listener {
 
     private void close() {
         running = false;
+        waitingPerm = false;
+        MAIN.removeCallbacks(statsTick);
         try { NativeCarina.nativeDestroy(); } catch (Throwable ignored) {}
         try { if (glassesConn != null) glassesConn.close(); } catch (Exception ignored) {}
         glassesConn = null;

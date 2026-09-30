@@ -21,6 +21,13 @@ static jobject g_listener = nullptr;
 static jmethodID g_onStereo = nullptr;
 static jmethodID g_onError = nullptr;
 static int g_logged_frames = 0;
+static int g_logged_pose = 0;
+static int g_logged_imu = 0;
+static int g_logged_vsync = 0;
+static int g_n_cam = 0;
+static int g_n_pose = 0;
+static int g_n_imu = 0;
+static int g_n_vsync = 0;
 
 static JNIEnv* env_for_cb(bool* attached) {
     *attached = false;
@@ -59,6 +66,7 @@ static void carina_camera_cb(char* image_left0, char* image_right0,
                              char* image_left1, char* image_right1,
                              double timestamp, int width, int height) {
     if (width <= 0 || height <= 0) return;
+    g_n_cam++;
     jobject listener;
     jmethodID onStereo;
     {
@@ -73,11 +81,12 @@ static void carina_camera_cb(char* image_left0, char* image_right0,
     if (!env) return;
 
     const int gray = width * height;
-    if (g_logged_frames < 3) {
-        LOGI("stereo frame %d %dx%d ts=%.6f L0=%p R0=%p L1=%p R1=%p assume %d B gray",
+    if (g_logged_frames < 5) {
+        LOGI("stereo frame %d %dx%d ts=%.6f L0=%p R0=%p L1=%p R1=%p assume %d B gray cam=%d pose=%d imu=%d vsync=%d",
              g_logged_frames, width, height, timestamp,
              static_cast<void*>(image_left0), static_cast<void*>(image_right0),
-             static_cast<void*>(image_left1), static_cast<void*>(image_right1), gray);
+             static_cast<void*>(image_left1), static_cast<void*>(image_right1), gray,
+             g_n_cam, g_n_pose, g_n_imu, g_n_vsync);
         g_logged_frames++;
     }
 
@@ -103,9 +112,35 @@ static void carina_camera_cb(char* image_left0, char* image_right0,
     if (attached) g_vm->DetachCurrentThread();
 }
 
-static void pose_cb(float*, double) {}
-static void vsync_cb(double) {}
-static void imu_cb(float*, double) {}
+static void pose_cb(float* pose, double ts) {
+    g_n_pose++;
+    if (g_logged_pose < 3) {
+        LOGI("pose %d ts=%.6f p=[%.3f %.3f %.3f] cam=%d imu=%d vsync=%d",
+             g_logged_pose, ts,
+             pose ? pose[0] : 0.f, pose ? pose[1] : 0.f, pose ? pose[2] : 0.f,
+             g_n_cam, g_n_imu, g_n_vsync);
+        g_logged_pose++;
+    }
+}
+
+static void vsync_cb(double ts) {
+    g_n_vsync++;
+    if (g_logged_vsync < 3) {
+        LOGI("vsync %d ts=%.6f cam=%d pose=%d imu=%d",
+             g_logged_vsync, ts, g_n_cam, g_n_pose, g_n_imu);
+        g_logged_vsync++;
+    }
+}
+
+static void imu_cb(float* imu, double ts) {
+    g_n_imu++;
+    if (g_logged_imu < 3) {
+        LOGI("imu %d ts=%.6f cam=%d pose=%d vsync=%d ax=%.3f",
+             g_logged_imu, ts, g_n_cam, g_n_pose, g_n_vsync,
+             imu ? imu[0] : 0.f);
+        g_logged_imu++;
+    }
+}
 
 extern "C" JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     g_vm = vm;
@@ -132,6 +167,13 @@ Java_sh_colak_xrconsole_recorder_NativeCarina_nativeCreate(
     g_onStereo = nullptr;
     g_onError = nullptr;
     g_logged_frames = 0;
+    g_logged_pose = 0;
+    g_logged_imu = 0;
+    g_logged_vsync = 0;
+    g_n_cam = 0;
+    g_n_pose = 0;
+    g_n_imu = 0;
+    g_n_vsync = 0;
     if (listener == nullptr) {
         LOGE("nativeCreate: null listener");
         return JNI_FALSE;
@@ -216,4 +258,12 @@ Java_sh_colak_xrconsole_recorder_NativeCarina_nativeDestroy(JNIEnv* env, jclass)
     g_onStereo = nullptr;
     g_onError = nullptr;
     LOGI("carina destroyed");
+}
+
+extern "C" JNIEXPORT jintArray JNICALL
+Java_sh_colak_xrconsole_recorder_NativeCarina_nativeStats(JNIEnv* env, jclass) {
+    jint vals[4] = {g_n_cam, g_n_pose, g_n_imu, g_n_vsync};
+    jintArray out = env->NewIntArray(4);
+    if (out) env->SetIntArrayRegion(out, 0, 4, vals);
+    return out;
 }
