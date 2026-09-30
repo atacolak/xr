@@ -6,6 +6,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.TypedValue;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -35,10 +36,12 @@ public final class MainActivity extends Activity {
 
         Button enable = new Button(this);
         enable.setText("Enable Wireless Debugging now");
-        enable.setOnClickListener(v -> {
-            Wadb.enable(this);
-            startWatch();
-            refresh();
+        enable.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                Wadb.enable(MainActivity.this);
+                startWatch();
+                refresh();
+            }
         });
         root.addView(enable);
 
