@@ -3,8 +3,8 @@
 Sensor lab: `console/recorder`. Acquisition: `CarinaSession` + `carina_bridge.cpp`.
 These are stereo **tracking** cameras. Depth is not a camera stream.
 
-Status: **partial**. Buffer identity and timestamp domain need a device run
-of this build. Pre-existing 2026-09-30 evidence is cited as such.
+Status: **measured** on Fold + Luma Ultra, session `20261001-171206`
+(15 s SENSOR, `xr-carina-sensor-v1`).
 
 ## Callback
 
@@ -13,62 +13,81 @@ XRCameraCallback(image_left0, image_right0, image_left1, image_right1,
                  timestamp, width, height)
 ```
 
-| buffer | 2026-09-30 pointers | this-build (fill) |
+| buffer | 2026-09-30 | 2026-10-01 this build |
 |---|---|---|
-| L0 | non-null, 640×480 | |
-| R0 | non-null, 640×480 | |
-| L1 | null (`0x0`) | |
-| R1 | null (`0x0`) | |
+| L0 | non-null, 640×480 | 307200 B every frame, unique FNV per frame |
+| R0 | non-null, 640×480 | 307200 B every frame, unique FNV per frame, **never** equal L0 |
+| L1 | null (`0x0`) | **always 0** (359/359) |
+| R1 | null (`0x0`) | **always 0** (359/359) |
 
-L1/R1 semantics: **unknown until this-build dump**. Prior run never delivered
-non-null L1/R1, so they are not a second live stereo pair on that session.
-Not proven: duplicate alias, temporal neighbor, alternate exposure.
+L1/R1 are unused on this firmware. Not a second live pair, not an alias of
+L0/R0 (`ptr_l0_eq_l1=0`, `hash_l0_eq_l1=0`). Semantics beyond "unused" stay
+unknown.
 
-The overlay now reports plane byte sizes, pointer-equality counts
-(`ptr L0==L1`, `R0==R1`), FNV hashes, and consecutive identical L0^R0 hashes.
+L0 and R0 are distinct fisheye views (left sees window/room; right sees a
+darker downward frustum). `repeat_hash_pair=0` — no consecutive duplicate
+stereo frames in this capture.
 
 ## Clocks
 
-SDK comments: pose timestamp is "monotonic timestamp in seconds"; IMU
-"timestamp in seconds"; VSync "when VSync occurred". Camera timestamp
-unit is unspecified in the header.
+`host_ns` = `clock_gettime(CLOCK_MONOTONIC)` at native receive.
 
-2026-09-30 **rates** (callback counts, not proven shared domain):
+| stream | n (15.05 s) | sdk dt | host dt | sdk vs host |
+|---|---|---|---|---|
+| camera | 359 | 40.0 ms (~25 Hz) after settle | 39.9 ms | see jump below |
+| pose | 351 | 40.0 ms | ~41.6 ms | sdk ≈ host (first sample 12 µs; later ~25–30 ms callback lag) |
+| vsync | 845 | 16.7 ms (~60 Hz) | ~17.2 ms | sdk ≈ host (sub-ms to a few ms) |
+| imu | 14087 | 1.00 ms (~1 kHz) | ~1.00 ms mean | sdk ≈ host |
 
-| stream | count ratio | log dt |
-|---|---|---|
-| camera | 1 | ~40 ms (~25 Hz) |
-| pose | ~1:1 with cam | ~40 ms |
-| vsync | ~2.4× cam | ~16.7 ms (~60 Hz) |
-| imu | ~40× cam | ~1 ms (~1 kHz) |
+Camera `sdk_ts` is **not** one domain from frame 0:
 
-Same-session logcat showed camera `ts≈5354` while pose/imu/vsync were
-`ts≈5370` on the first burst, then later camera frames jumped onto the
-5370 epoch. **Similar magnitude is not a shared timestamp domain.**
+- seq 0–5: `sdk_ts ≈ 3028.6` while `host_s ≈ 10094.0` (offset **+7065.2 s**)
+- seq 6 onward: `sdk_ts` jumps to `10094.23` and then tracks CLOCK_MONOTONIC
+  with a stable **~24 ms** host lag (callback delay, not a second clock)
 
-This build stamps every callback with `clock_gettime(CLOCK_MONOTONIC)`
-(`host_ns`) at native receive, plus the SDK `timestamp`. Overlay shows
-sdk dt and host dt.
+Pose / IMU / vsync used the monotonic-seconds domain from the first sample.
+Do not mix the first six camera timestamps with pose/IMU without applying
+the jump. After seq 6, camera/pose/imu/vsync share one seconds timeline
+aligned with `CLOCK_MONOTONIC`.
 
-Unknown until measured:
+Unknown:
 
-- whether camera/pose/imu/vsync share one clock
-- L/R sync inside one callback (same exposure / same time)
-- jitter / dropped / repeated frames
+- L/R sync inside one callback (same exposure / same time) — same
+  `sdk_ts` per pair, not a proven shared shutter
 - whether vsync is panel scanout
+- why the first six camera timestamps use the 3028 epoch
 
 ## Exposure
 
 SDK: auto, or manual `exposure_time_ms` in [0.01, 8.0] and `gain` in [0, 15].
-Settings UI: auto / 0.5 ms g4 / 2 ms g8 / 8 ms g15. Results: **not yet run**.
+This capture used `set_auto_exposure_carina` (rc=0). First frames are very
+dark; later L0 has a usable fisheye scene after AE. Manual presets were
+**not** run this session.
 
 ## Device identity
 
-`xr_device_provider_get_sn_hash` returns SHA-256 of the board serial, not
-the raw SN. Stored as `sn_hash` in sensor metadata when the call succeeds.
+`get_sn_hash` = SHA-256 of board serial, not the raw SN.
+
+```
+3d4b878d897b1e1cf0ee62357f3e663627cb21e4a2e06a2af78e4e46235a4558
+```
+
+USB: `pid=0x1104`, `xr_device_provider_get_device_type=2` (Carina).
+
+## SENSOR session
+
+`Movies/XRConsole/Sensor/20261001-171206/`:
+
+- `camera.gray8` 220569600 B = 359 × (L0+R0) 8-bit 640×480
+- `camera.index.jsonl` plane sizes, ptrs, FNV hashes, sdk_ts, host_ns
+- `pose.jsonl` 351 samples (`p,y,z,qw,qx,qy,qz`)
+- `imu.bin` 14087 × `{host_ns i64, sdk_ts f64, ax ay az gx gy gz f32}`
+- `vsync.jsonl` 845 samples
+- `metadata.json` `format=xr-carina-sensor-v1`, `closed=true`
+
+Replay: `console/recorder/sensor_replay.py <dir>`.
 
 ## Factory calibration
 
-See child `xr-wdw.3`. `initialize(handle, custom_config, cache_file_dir)`
-can fail `CALIB_INIT` / `SERIAL_FETCH`. UxSpace passed nullptr/nullptr.
-This build passes app cache `.../cache/carina` as `cache_file_dir`.
+See `docs/carina-calibration.md`. `cache/carina` was passed as
+`cache_file_dir`; after a successful initialize it stayed **empty**.

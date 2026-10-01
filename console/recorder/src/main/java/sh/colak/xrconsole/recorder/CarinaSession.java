@@ -111,28 +111,39 @@ final class CarinaSession implements NativeCarina.Listener, UsbHost.Listener {
         waitingPerm = false;
         if (!running || glassesDev == null || device.getDeviceId() != glassesDev.getDeviceId()) return;
         glassesConn = connection;
-        String cache = cacheDir != null ? cacheDir.getAbsolutePath() : null;
-        if (!NativeCarina.nativeCreate(device.getProductId(), connection.getFileDescriptor(), cache, this)) {
-            RecState.I.grayInfo = "Carina create failed";
-            RecState.I.ping();
-            close();
-            return;
-        }
-        int type = NativeCarina.nativeDeviceType();
-        int rc = NativeCarina.nativeStart();
-        if (rc != 0) {
-            RecState.I.grayInfo = "Carina start rc=" + rc + " type=" + type;
-            RecState.I.ping();
-            close();
-            return;
-        }
-        byte[] sn = NativeCarina.nativeSnHash();
-        RecState.I.carinaSnHash = sn == null ? "" : hex(sn);
-        RecState.I.grayInfo = "Carina type=" + type + " sn=" + shortSn();
+        final int pid = device.getProductId();
+        final int fd = connection.getFileDescriptor();
+        final String cache = cacheDir != null ? cacheDir.getAbsolutePath() : null;
+        RecState.I.grayInfo = "Carina starting…";
         RecState.I.ping();
-        Log.i(TAG, "carina session streaming " + UsbHost.describe(device)
-                + " type=" + type + " cache=" + cache + " sn=" + RecState.I.carinaSnHash);
-        MAIN.post(statsTick);
+        new Thread(() -> {
+            if (!NativeCarina.nativeCreate(pid, fd, cache, this)) {
+                MAIN.post(() -> {
+                    RecState.I.grayInfo = "Carina create failed";
+                    RecState.I.ping();
+                    close();
+                });
+                return;
+            }
+            int type = NativeCarina.nativeDeviceType();
+            int rc = NativeCarina.nativeStart();
+            MAIN.post(() -> {
+                if (!running) return;
+                if (rc != 0) {
+                    RecState.I.grayInfo = "Carina start rc=" + rc + " type=" + type;
+                    RecState.I.ping();
+                    close();
+                    return;
+                }
+                byte[] sn = NativeCarina.nativeSnHash();
+                RecState.I.carinaSnHash = sn == null ? "" : hex(sn);
+                RecState.I.grayInfo = "Carina type=" + type + " sn=" + shortSn();
+                RecState.I.ping();
+                Log.i(TAG, "carina session streaming pid=0x" + Integer.toHexString(pid)
+                        + " type=" + type + " cache=" + cache + " sn=" + RecState.I.carinaSnHash);
+                MAIN.post(statsTick);
+            });
+        }, "carina-start").start();
     }
 
     @Override public void onUsbDenied(UsbDevice device) {

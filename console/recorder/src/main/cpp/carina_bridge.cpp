@@ -90,13 +90,10 @@ static jbyteArray copy_plane(JNIEnv* env, const char* src, int nbytes) {
 
 static void sdk_log_hook(int level, const char* tag, const char* message) {
     LOGI("sdk[%d] %s %s", level, tag ? tag : "", message ? message : "");
-    jobject listener;
-    jmethodID onLog;
-    {
-        std::lock_guard<std::mutex> lk(g_lock);
-        listener = g_listener;
-        onLog = g_onSdkLog;
-    }
+    if (!g_lock.try_lock()) return;
+    jobject listener = g_listener;
+    jmethodID onLog = g_onSdkLog;
+    g_lock.unlock();
     if (!listener || !onLog) return;
     bool attached = false;
     JNIEnv* env = env_for_cb(&attached);

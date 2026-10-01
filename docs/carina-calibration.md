@@ -56,9 +56,11 @@ public export.
 | camera-to-IMU | likely | those T_*_imu nodes |
 | cache | `cache_file_dir` on initialize | skipped if null |
 
-This build now passes app cache `cache/carina` as `cache_file_dir` and
-enables SDK debug logs. Next device run should list files created there.
-If they are YAML/FlatBuffer we can try **A**. Until a cache dump exists,
-treat calibration as **B**.
+This build passes app cache `cache/carina` as `cache_file_dir` and
+enables SDK debug logs. Device run 2026-10-01 17:12 (`sn_hash` 3d4b878d…):
+initialize succeeded in ~0.46 s with `CarinaDeviceProvider initialized
+(6DOF=true)`. **No** `CalibrationManager` / `cache data saved` log lines.
+`cache/carina` stayed empty (no YAML, no grids). Outcome remains **B**.
+Treat factory K/R/T as unavailable until a cache dump or public API appears.
 
 Do not claim a model-default K/R/T from this. Child 4 stays planned.

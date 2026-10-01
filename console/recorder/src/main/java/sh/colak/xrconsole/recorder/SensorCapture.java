@@ -1,9 +1,10 @@
 package sh.colak.xrconsole.recorder;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
-
 import org.json.JSONObject;
 
 import java.io.BufferedOutputStream;
@@ -21,9 +22,10 @@ import java.util.TimeZone;
 /** Lossless Carina sensor session. Distinct from RGB MP4 recording. */
 final class SensorCapture implements CarinaSession.Sink {
     static final String TAG = "XRRecorder/Sensor";
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private static final Runnable TIMEOUT = SensorCapture::stop;
     private static final Object LOCK = new Object();
     private static SensorCapture active;
-
     private final File dir;
     private final long t0Elapsed;
     private final long maxMs;
@@ -59,11 +61,13 @@ final class SensorCapture implements CarinaSession.Sink {
             RecState.I.startedElapsedMs = SystemClock.elapsedRealtime();
             RecState.I.setPhase(RecState.Phase.RECORDING);
             Log.i(TAG, "sensor session " + dir);
+            MAIN.postDelayed(TIMEOUT, cap.maxMs);
             return dir;
         }
     }
 
     static void stop() {
+        MAIN.removeCallbacks(TIMEOUT);
         SensorCapture cap;
         synchronized (LOCK) {
             cap = active;

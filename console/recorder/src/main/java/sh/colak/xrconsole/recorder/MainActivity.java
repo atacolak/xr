@@ -148,7 +148,24 @@ public final class MainActivity extends Activity implements RecState.Listener {
     private void handleIntent(Intent intent) {
         if (intent == null) return;
         if (ACTION_STOP.equals(intent.getAction())) {
-            RecordService.stop(this);
+            if (RecState.I.sensorSession) SensorCapture.stop();
+            else RecordService.stop(this);
+            return;
+        }
+        String preview = intent.getStringExtra("preview");
+        if (preview != null) {
+            RecState.I.previewSource = PreviewSource.fromExtra(preview);
+            RecState.I.grayInfo = "";
+            applyPreviewFit();
+            RgbPreview.sync(this);
+            GrayPreview.sync(this);
+            render();
+        }
+        int sensorS = intent.getIntExtra("sensor_s", 0);
+        if (sensorS > 0) {
+            if (RecState.I.phase == RecState.Phase.IDLE || RecState.I.phase == RecState.Phase.ERROR) {
+                startSensor(sensorS * 1000L);
+            }
             return;
         }
         if (ACTION_SMOKE.equals(intent.getAction()) || intent.getBooleanExtra("auto_record", false)) {
@@ -191,6 +208,10 @@ public final class MainActivity extends Activity implements RecState.Listener {
     }
 
     private void startSensor() {
+        startSensor(30_000);
+    }
+
+    private void startSensor(long durationMs) {
         refreshPresence();
         if (!RecState.I.glassesPresent) {
             RecState.I.fail("connect glasses control USB for sensor capture");
@@ -200,7 +221,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         CarinaClock.reset();
         CarinaSession.ensure(this);
         try {
-            SensorCapture.start(this, 30_000);
+            SensorCapture.start(this, durationMs);
         } catch (Exception e) {
             RecState.I.fail("sensor capture: " + e.getMessage());
         }

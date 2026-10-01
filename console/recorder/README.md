@@ -194,5 +194,12 @@ scripts/xrctl adb shell am start -n sh.colak.xrconsole.recorder/.MainActivity \
   -a sh.colak.xrconsole.recorder.SMOKE --ei duration_s 35 --ei segment_s 20
 ```
 
+Gray preview + lossless SENSOR (seconds):
+
+```sh
+scripts/xrctl adb shell am start -n sh.colak.xrconsole.recorder/.MainActivity \
+  --es preview gray --ei sensor_s 15
+```
+
 Never uninstall / `pm clear` to iterate. Stable package + debug
 keystore + `adb install -r`.
