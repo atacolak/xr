@@ -33,6 +33,10 @@ final class RecState {
     volatile String cameraModes = "";
     volatile PreviewSource previewSource = PreviewSource.RGB;
     volatile String grayInfo = "";
+    volatile String carinaSnHash = "";
+    volatile String planePresent = "";
+    volatile long[] planePtr;
+    volatile boolean sensorSession;
 
     void add(Listener l) { listeners.add(l); }
     void remove(Listener l) { listeners.remove(l); }

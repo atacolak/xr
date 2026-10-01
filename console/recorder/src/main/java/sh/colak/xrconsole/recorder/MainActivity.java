@@ -181,10 +181,30 @@ public final class MainActivity extends Activity implements RecState.Listener {
                 || p == RecState.Phase.STOPPING) {
             btn.setEnabled(false);
             btn.setText("STOPPING…");
-            RecordService.stop(this);
+            if (RecState.I.sensorSession) SensorCapture.stop();
+            else RecordService.stop(this);
+        } else if (RecState.I.previewSource.isGray()) {
+            startSensor();
         } else {
             tryStart(RecordEngine.DEFAULT_SEGMENT_MS, 0);
         }
+    }
+
+    private void startSensor() {
+        refreshPresence();
+        if (!RecState.I.glassesPresent) {
+            RecState.I.fail("connect glasses control USB for sensor capture");
+            render();
+            return;
+        }
+        CarinaClock.reset();
+        CarinaSession.ensure(this);
+        try {
+            SensorCapture.start(this, 30_000);
+        } catch (Exception e) {
+            RecState.I.fail("sensor capture: " + e.getMessage());
+        }
+        render();
     }
 
     private void tryStart(long segMs, long durMs) {
@@ -316,6 +336,22 @@ public final class MainActivity extends Activity implements RecState.Listener {
         glasses.setText(st.cameraPresent ? "Glasses RGB ready" : "Glasses RGB missing");
         glasses.setPadding(0, dp(16), 0, 0);
         body.addView(glasses);
+
+        TextView exp = tv(13, 0xFF888888);
+        exp.setText("Carina exposure");
+        exp.setGravity(Gravity.START);
+        exp.setPadding(0, dp(16), 0, dp(4));
+        body.addView(exp);
+        body.addView(expBtn("auto", () -> NativeCarina.nativeSetExposure(true, 0, 0)));
+        body.addView(expBtn("0.5 ms g4", () -> NativeCarina.nativeSetExposure(false, 0.5f, 4)));
+        body.addView(expBtn("2 ms g8", () -> NativeCarina.nativeSetExposure(false, 2f, 8)));
+        body.addView(expBtn("8 ms g15", () -> NativeCarina.nativeSetExposure(false, 8f, 15)));
+
+        TextView sensor = tv(12, 0xFF888888);
+        sensor.setGravity(Gravity.START);
+        sensor.setPadding(0, dp(12), 0, 0);
+        sensor.setText("On a grayscale preview, RECORD starts a 30s lossless sensor session (not MP4).");
+        body.addView(sensor);
 
         d.setContentView(body);
         settings = d;
@@ -469,9 +505,13 @@ public final class MainActivity extends Activity implements RecState.Listener {
         }
         err.setVisibility(err.getText().length() == 0 ? View.GONE : View.VISIBLE);
         if (recOn || st.phase == RecState.Phase.STARTING || st.phase == RecState.Phase.STOPPING) {
-            btn.setText("STOP");
+            btn.setText(st.sensorSession ? "STOP SENSOR" : "STOP");
             btn.setEnabled(st.phase != RecState.Phase.STOPPING);
             btn.setAlpha(1f);
+        } else if (st.previewSource.isGray()) {
+            btn.setText("SENSOR");
+            btn.setEnabled(st.glassesPresent && st.phase != RecState.Phase.STOPPING);
+            btn.setAlpha(st.glassesPresent ? 1f : 0.35f);
         } else {
             btn.setText("RECORD");
             btn.setEnabled(ready && st.phase != RecState.Phase.STOPPING);
@@ -505,7 +545,7 @@ public final class MainActivity extends Activity implements RecState.Listener {
         Rect bounds = new Rect();
         int w = 0;
         int h = 0;
-        for (String s : new String[] {"RECORD", "STOP", "STOPPING…"}) {
+        for (String s : new String[] {"RECORD", "STOP", "STOPPING…", "SENSOR", "STOP SENSOR"}) {
             p.getTextBounds(s, 0, s.length(), bounds);
             w = Math.max(w, bounds.width());
             h = Math.max(h, bounds.height());
@@ -534,6 +574,15 @@ public final class MainActivity extends Activity implements RecState.Listener {
         return t;
     }
 
+    private TextView expBtn(String label, Runnable r) {
+        TextView t = tv(14, Color.WHITE);
+        t.setText(label);
+        t.setGravity(Gravity.START);
+        t.setPadding(0, dp(8), 0, dp(8));
+        t.setOnClickListener(v -> r.run());
+        return t;
+    }
+
     private int dp(int v) {
         return Math.round(v * getResources().getDisplayMetrics().density);
     }
@@ -541,8 +590,10 @@ public final class MainActivity extends Activity implements RecState.Listener {
     @Override protected void onDestroy() {
         RecState.I.remove(this);
         if (settings != null && settings.isShowing()) settings.dismiss();
+        if (RecState.I.sensorSession) SensorCapture.stop();
         GrayPreview.detach();
         RgbPreview.detach();
+        CarinaSession.stop();
         if (audioMonitor != null) audioMonitor.stop();
         if (glassesMonitor != null) glassesMonitor.stop();
         h.removeCallbacks(tick);
