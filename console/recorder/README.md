@@ -18,11 +18,18 @@ V1 **records** only:
    SDK MJPEG 1920×1080@30. Nothing higher is advertised.
 2. One selected Android audio input, encoded as AAC 48 kHz mono
 
-Idle **preview** also opens the two Carina grayscale tracking cameras on
-glasses control USB `0x35CA:0x1104` (not UVC): **L GRAY**, **R GRAY**, or
-**L|R** side-by-side. Measured **640×480** L0+R0 at ~25 Hz, with pose / IMU /
-vsync on the same handle. They look more downward than RGB. Preview-only —
-they are not muxed into the MP4 yet.
+Idle **preview** also opens the two Carina grayscale **tracking** cameras on
+glasses control USB `0x35CA:0x1104` (not UVC, not depth cameras): **L GRAY**,
+**R GRAY**, or **L|R**. Measured **640×480** L0+R0 at ~25 Hz, with pose / IMU /
+vsync on the same handle. They look more downward than RGB. Not muxed into the
+RGB MP4.
+
+On a grayscale preview, **SENSOR** starts a 30 s lossless session
+(`Movies/XRConsole/Sensor/<stamp>/`: `metadata.json`, `camera.gray8`,
+`camera.index.jsonl`, `pose.jsonl`, `imu.bin`, `vsync.jsonl`). Replay:
+`console/recorder/sensor_replay.py <dir>`. Distinct from RGB **RECORD**.
+Clocks and plane identity: `docs/carina-measurements.md`. Factory calib hunt:
+`docs/carina-calibration.md`.
 
 The microphone selector enumerates capture-capable Android inputs: built-in
 mics, USB, wired headset, Bluetooth SCO/LE. Telephony RX, remote submix, and
