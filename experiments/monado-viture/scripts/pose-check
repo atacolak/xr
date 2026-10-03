@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# M3 acceptance instrument: is the Carina pose stream usable, and do the axes respond?
+#
+#   scripts/pose-check              # 15 s
+#   scripts/pose-check 30           # longer
+#
+# Hold or wear the glasses during the run, point them at a lit, textured scene, and
+# slowly turn / nod / tilt them. The verdict printed at the end *is* the M3 evidence:
+#
+#   stable %            the SDK's own pose status. 0% means the VIO never converged
+#                       and any HMD orientation taken from this stream is meaningless
+#                       -- regardless of what the numbers say.
+#   yaw/pitch/roll      what actually moved and by how much. Turning your head must
+#   range               move yaw, nodding pitch, tilting roll, with no inversion and
+#                       no swapped pair (that is the axis check in docs/coordinates.md).
+#
+# Needs no display: it runs over USB alone, so a wedged X does not block it.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+TOOL="$ROOT/tools/viture-pose-dump"
+SECS="${1:-15}"
+LOG="${POSE_CHECK_LOG:-/tmp/pose-check.log}"
+
+[ -x "$TOOL" ] || { echo "no $TOOL (build: tools/build-pose-dump.sh)" >&2; exit 1; }
+if ! lsusb -d 35ca: >/dev/null 2>&1; then
+	echo "no VITURE device on USB (vid 0x35CA)." >&2
+	echo "Check the cable/adapter; if it enumerates but this user cannot open it, the" >&2
+	echo "udev rule is missing: experiments/monado-viture/udev/70-viture-xr.rules" >&2
+	exit 1
+fi
+
+echo "capturing ${SECS}s -- hold the glasses now: look around a lit, textured room,"
+echo "and turn / nod / tilt them slowly so the axes have something to show."
+echo
+
+# The SDK teardown can stall on an unhappy device, so cap the whole run; the summary
+# is printed before that, so a timeout still leaves usable output.
+LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+	timeout "$((SECS + 45))" "$TOOL" --seconds "$SECS" >"$LOG" 2>&1 || true
+
+grep -E "^samples=|^measured rate|^interval:|^position spread|^max orientation step|^pose status|^orientation range|^  " "$LOG" || {
+	echo "no summary in $LOG -- the run did not get that far:" >&2
+	tail -5 "$LOG" >&2
+	exit 1
+}
+
+printf '\nfull log: %s\n' "$LOG"
+printf 'next: if stable is non-zero and the axes moved, record the ranges as the M3\n'
+printf 'evidence; if stable is 0, the VIO has not converged -- better light, more texture,\n'
+printf 'and keep the glasses moving.\n'

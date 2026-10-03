@@ -76,6 +76,29 @@ an X restart to clear (see beads `xr-bi6.8`).
 `LD_LIBRARY_PATH=$VITURE_SDK_DIR/x86_64 tools/viture-pose-dump --seconds 10 --json`.
 `--native-probe` is opt-in because the native-mode queries never return on Carina.
 
+## Reproducing the M2 result (runtime stereo on the panels)
+
+Verified end to end on 2026-10-04. The ordering matters, and the environment
+variables are the ones that worked:
+
+```sh
+scripts/display-mode sbs                    # glasses to 0x45, X onto 3840x1200@90
+VITURE_NO_SDK=0 XRT_COMPOSITOR_COMPUTE=0 XRT_COMPOSITOR_FORCE_XCB=1 \
+  XRT_COMPOSITOR_XCB_FULLSCREEN=1 XRT_COMPOSITOR_LOG=info DISPLAY=:1 scripts/run-service
+VITURE_XR_HOLD=15 scripts/run-hello-xr -g Vulkan --space Local
+```
+
+Landmarks on the way through, all observed:
+- `viture_sdk_configure_display: display mode 0x45 (3840x1200@90-sbs) confirmed`
+- `viture_hmd_create: created: Luma Ultra, panel 3840x1200@90-sbs (3840x1200 total, 2 view(s), 90 Hz)`
+- `views[0].viewport x=0 w=1920 h=1200`, `views[1] x=1920 w=1920 h=1200`, target `xcb` with extents `3840x1200`
+- the Monado window is 3840x1200 and hello_xr reaches `XR_SESSION_STATE_FOCUSED`
+
+Two caveats that cost real time here: `XRT_COMPOSITOR_LOG=debug` selects the deferred
+windowed target and the window then stays **black** even though the client is focused
+(use `info`), and the XCB target may log `Selected display 0 has no size -- Falling
+back to display 3: DP-2`, which is normal and not an error.
+
 ## Hazard: on this workstation, restarting X kills the agent sessions
 
 Every omp / herdr session on sfub descends from the X session
