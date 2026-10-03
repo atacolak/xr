@@ -31,3 +31,7 @@ local.properties
 
 # NDK cmake intermediates
 **/.cxx/
+
+# Python bytecode (tools are run as scripts, never packed)
+__pycache__/
+*.pyc
