@@ -214,13 +214,21 @@ viture_config_from_env(struct viture_config *cfg)
 /*!
  * Ask the vendor SDK for a pose and convert it.
  *
+ * Caller MUST hold hmd->mutex. os_mutex is NOT recursive (see os_mutex_init in
+ * os_threading.h), and every caller here already holds the lock, so taking it
+ * again in this function self-deadlocks the instant a provider exists. That is
+ * exactly how session creation hung: xrCreateSession -> create_local_space ->
+ * locate_space -> get_tracked_pose -> poll_pose -> lock, forever. With no SDK
+ * (VITURE_NO_SDK=1) the early provider==NULL return hid the bug, because it
+ * happens before the lock in the old code.
+ *
  * @param hmd        Device.
  * @param predict_s  Seconds ahead to predict (0 = now).
  * @param out        Filled in on success.
  * @return true if a sample was obtained.
  */
 static bool
-viture_poll_pose(struct viture_hmd *hmd, double predict_s, struct xrt_space_relation *out)
+viture_poll_pose_locked(struct viture_hmd *hmd, double predict_s, struct xrt_space_relation *out)
 {
 	if (hmd->provider == NULL) {
 		return false;
@@ -235,9 +243,7 @@ viture_poll_pose(struct viture_hmd *hmd, double predict_s, struct xrt_space_rela
 	float pose[VITURE_POSE_COUNT] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
 	int status = 1;
 
-	os_mutex_lock(&hmd->mutex);
 	const int ret = xr_device_provider_get_gl_pose_carina(hmd->provider, pose, predict_s, &status);
-	os_mutex_unlock(&hmd->mutex);
 
 	if (ret != VITURE_GLASSES_SUCCESS) {
 		hmd->pose_errors++;
@@ -278,7 +284,7 @@ viture_hmd_update_inputs(struct xrt_device *xdev)
 
 	struct xrt_space_relation relation = XRT_SPACE_RELATION_ZERO;
 	os_mutex_lock(&hmd->mutex);
-	const bool ok = viture_poll_pose(hmd, 0.0, &relation);
+	const bool ok = viture_poll_pose_locked(hmd, 0.0, &relation);
 	if (ok) {
 		hmd->last_relation = relation;
 		hmd->has_relation = true;
@@ -314,7 +320,7 @@ viture_hmd_get_tracked_pose(struct xrt_device *xdev,
 
 	struct xrt_space_relation relation = XRT_SPACE_RELATION_ZERO;
 	os_mutex_lock(&hmd->mutex);
-	const bool ok = viture_poll_pose(hmd, predict_s, &relation);
+	const bool ok = viture_poll_pose_locked(hmd, predict_s, &relation);
 	if (ok) {
 		hmd->last_relation = relation;
 		hmd->has_relation = true;
