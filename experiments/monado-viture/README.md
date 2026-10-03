@@ -76,6 +76,15 @@ an X restart to clear (see beads `xr-bi6.8`).
 `LD_LIBRARY_PATH=$VITURE_SDK_DIR/x86_64 tools/viture-pose-dump --seconds 10 --json`.
 `--native-probe` is opt-in because the native-mode queries never return on Carina.
 
+## Hazard: on this workstation, restarting X kills the agent sessions
+
+Every omp / herdr session on sfub descends from the X session
+(`kitty` -> `herdr` server -> the hcom-launched agents), so `systemctl restart gdm`
+or a reboot takes down the operator's terminal *and* the agent sessions with it, not
+just the desktop. Wedging the GPU display engine therefore costs a session teardown
+to recover. Drive display experiments from a channel that survives X (a mosh/ssh
+session), and relaunch agents afterwards from their `--resume` ids.
+
 `scripts/run-service` defaults to the no-hardware static HMD
 (`VITURE_NO_SDK=1`); use `VITURE_NO_SDK=0 scripts/run-service` for the real
 vendor path once the glasses are attached. `scripts/run-hello-xr` takes the

@@ -275,6 +275,8 @@ main(int argc, char **argv)
 	double dt_min = 1e9, dt_max = 0.0, dt_sum = 0.0;
 	double px_min = 1e9, px_max = -1e9, py_min = 1e9, py_max = -1e9, pz_min = 1e9, pz_max = -1e9;
 	double max_ang_step = 0.0;
+	double yaw_min = 1e9, yaw_max = -1e9, pitch_min = 1e9, pitch_max = -1e9, roll_min = 1e9, roll_max = -1e9;
+	unsigned long long stable = 0;
 	float prev[VITURE_POSE_COUNT] = {0};
 	bool have_prev = false;
 	const double interval = o.rate_hz > 0.0 ? 1.0 / o.rate_hz : 0.0;
@@ -293,7 +295,16 @@ main(int argc, char **argv)
 			quat_to_euler_deg(pose, &yaw, &pitch, &roll);
 			if (status != 0) {
 				unstable++;
+			} else {
+				stable++;
 			}
+
+			if (yaw < yaw_min) yaw_min = yaw;
+			if (yaw > yaw_max) yaw_max = yaw;
+			if (pitch < pitch_min) pitch_min = pitch;
+			if (pitch > pitch_max) pitch_max = pitch;
+			if (roll < roll_min) roll_min = roll;
+			if (roll > roll_max) roll_max = roll;
 
 			if (n > 0) {
 				const double dt = t - last;
@@ -370,6 +381,20 @@ main(int argc, char **argv)
 	printf("position spread (device units): x=%.5f y=%.5f z=%.5f\n", px_max - px_min, py_max - py_min,
 	       pz_max - pz_min);
 	printf("max orientation step between samples=%.3f deg\n", max_ang_step);
+	if (n > 0) {
+		printf("pose status: stable=%llu unstable=%llu (%.1f%% stable)\n", stable, unstable,
+		       100.0 * (double)stable / (double)n);
+		printf("orientation range (deg): yaw=%.2f..%.2f  pitch=%.2f..%.2f  roll=%.2f..%.2f\n", yaw_min,
+		       yaw_max, pitch_min, pitch_max, roll_min, roll_max);
+		if (stable == 0) {
+			printf("  NO stable sample in this run: the VIO has not converged, so any HMD\n"
+			       "  orientation from this stream is meaningless. Point the glasses at a lit,\n"
+			       "  textured scene and move them a little, then run again.\n");
+		} else if (yaw_max - yaw_min < 1.0 && pitch_max - pitch_min < 1.0 && roll_max - roll_min < 1.0) {
+			printf("  Poses are stable but nothing moved: turn/nod/tilt the glasses and rerun to\n"
+			       "  check signs and axes.\n");
+		}
+	}
 	printf("\nInterpretation notes:\n");
 	printf("  * position spread while the head is still = noise floor of the VIO.\n");
 	printf("  * the vendor headers do NOT state the unit of the position component;\n");
