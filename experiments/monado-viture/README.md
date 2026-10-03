@@ -49,13 +49,32 @@ scripts/install-deps-local.sh     # once: build deps into a private sysroot (no 
 scripts/test-coordinates          # offline pose/axis unit tests, no glasses needed
 scripts/build                     # patch Monado, configure, build
 scripts/patch-monado.sh status    # is the patch applied? against which base?
+scripts/display-mode 2d|sbs       # match the glasses and X in the order that works
+scripts/display-mode sbs --pattern  # ... and throw the stereo test pattern up
+tools/make-stereo-pattern.py      # regenerate that pattern (3 squares, 3 disparities)
+tools/kms-probe.py --enumerate    # DRM/KMS view, and custom timings without X
+tools/x-edid.py --output DP-2     # decode the EDID an X output presents
 tools/build-pose-dump.sh          # characterise the pose stream, no Monado needed
+tools/viture-pose-dump --get-mode # what display mode the glasses are actually in
 tools/viture-pose-dump --seconds 10 --json
 scripts/run-service               # start monado-service (clears a stale IPC socket)
 scripts/run-hello-xr              # run hello_xr against the built runtime
 scripts/run-beamng                # gated until M0-M3 are measured
 scripts/restore-display save      # ALWAYS do this before touching displays
 ```
+
+**Display modes are order-sensitive.** A mode change on the glasses makes the sink
+re-present its EDID, and X only re-reads the sink on hotplug. Set the device first,
+wait for X to *offer* the timing, then point the output at it — `scripts/display-mode`
+does exactly that. Doing it the other way round leaves X driving a timing the sink no
+longer offers; after that every `xrandr` call fails with `BadMatch` and the GPU
+display engine wedges (`nvidia-modeset: Idling display engine timed out`), which needs
+an X restart to clear (see beads `xr-bi6.8`).
+
+`tools/viture-pose-dump` needs the SDK's own libraries on the loader path, because
+`libcarina_vio` is `dlopen`ed and the caller's `DT_RUNPATH` is not transitive:
+`LD_LIBRARY_PATH=$VITURE_SDK_DIR/x86_64 tools/viture-pose-dump --seconds 10 --json`.
+`--native-probe` is opt-in because the native-mode queries never return on Carina.
 
 `scripts/run-service` defaults to the no-hardware static HMD
 (`VITURE_NO_SDK=1`); use `VITURE_NO_SDK=0 scripts/run-service` for the real

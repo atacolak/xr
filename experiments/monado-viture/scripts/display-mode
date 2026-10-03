@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Put the glasses and X into a *matched* pair of states.
+#
+# Why this exists: on this host a display-mode change on the glasses makes the sink
+# re-present its EDID, and X only re-reads the sink on hotplug. Doing it in the
+# wrong order leaves X driving a timing the sink no longer offers, after which every
+# xrandr call fails with BadMatch. That is the state that wedged the GPU display
+# engine on 2026-10-04 (see beads xr-bi6.8). This script is the order that works:
+#
+#   1. ask the vendor device for the mode (0x43 2d / 0x45 sbs)
+#   2. wait for X to offer the matching timing (the sink re-presents it)
+#   3. only then point the X output at it
+#
+# Usage:
+#   scripts/display-mode 2d            # 1920x1200@90, one image, usable desktop
+#   scripts/display-mode sbs           # 3840x1200@90 side-by-side, one half per eye
+#   scripts/display-mode sbs --pattern # ... and throw the stereo test pattern up
+#
+# Requires the glasses attached and the vendor udev rule installed (access is
+# verified up front). Nothing here needs root.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SDK="${VITURE_SDK_DIR:-$HOME/workspace/uxspace/Android/SDK/linux-x86_64}"
+TOOL="$ROOT/tools/viture-pose-dump"
+export DISPLAY="${DISPLAY:-:1}"
+
+WANT="${1:-2d}"
+PATTERN=0
+for a in "$@"; do [ "$a" = "--pattern" ] && PATTERN=1; done
+
+case "$WANT" in
+	2d)
+		MODE_NAME='1920x1200@90-2d'
+		X_MODE='1920x1200'
+		X_RATE='90'
+		;;
+	sbs)
+		MODE_NAME='3840x1200@90-sbs'
+		X_MODE='3840x1200'
+		X_RATE='90'
+		;;
+	*)
+		echo "usage: $0 2d|sbs [--pattern]" >&2
+		exit 2
+		;;
+esac
+
+[ -x "$TOOL" ] || { echo "no $TOOL (build it: tools/build-pose-dump.sh)" >&2; exit 1; }
+command -v xrandr >/dev/null || { echo "no xrandr" >&2; exit 1; }
+xrandr --query >/dev/null 2>&1 || { echo "cannot reach X on $DISPLAY" >&2; exit 1; }
+
+OUT=$(xrandr --query | awk '/ connected/{print $1; exit}')
+[ -n "$OUT" ] || { echo "no connected X output" >&2; exit 1; }
+echo "output=$OUT  target=$MODE_NAME  (X wants $X_MODE@$X_RATE)"
+
+if ! lsusb -d 35ca: >/dev/null 2>&1; then
+	echo "glasses not on the USB bus; attach them first" >&2
+	exit 1
+fi
+
+# 1. device side. The tool's SDK teardown can stall >15 s on an unhappy device, so
+#    cap it and do not treat the timeout as a failure: the mode lands before that.
+echo "--- setting device mode $MODE_NAME"
+LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+	timeout 25 "$TOOL" --set-mode "$MODE_NAME" --seconds 2 2>&1 |
+	grep -E "^display mode:|^set\(" || true
+
+# 2. wait for X to be offered the timing (the sink re-presents its mode set)
+echo "--- waiting for X to offer $X_MODE"
+offered=0
+for _ in $(seq 1 20); do
+	if xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | grep -qE "^[[:space:]]+${X_MODE}[[:space:]]"; then
+		offered=1
+		break
+	fi
+	sleep 1
+done
+if [ "$offered" != 1 ]; then
+	echo "    X never offered $X_MODE. Sink mode and X are out of step; a replug of the" >&2
+	echo "    glasses makes X re-read the sink. Nothing changed." >&2
+	exit 1
+fi
+
+# 3. point X at it
+echo "--- setting $OUT to $X_MODE@$X_RATE"
+xrandr --output "$OUT" --mode "$X_MODE" --rate "$X_RATE" --primary --pos 0x0
+sleep 2
+xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | head -4
+xrandr --query --current | head -1
+xrandr --listmonitors
+
+if [ "$PATTERN" = 1 ]; then
+	P="$ROOT/docs/stereo-test-pattern.png"
+	if [ ! -f "$P" ]; then
+		echo "no $P; skipping pattern" >&2
+	else
+		pkill -x feh 2>/dev/null || true
+		setsid feh --fullscreen --no-menus --hide-pointer "$P" >/dev/null 2>&1 &
+		echo "stereo test pattern up (left/right halves differ by disparity)"
+	fi
+fi
