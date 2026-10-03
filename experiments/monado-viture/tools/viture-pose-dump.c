@@ -50,6 +50,8 @@ struct options
 	bool sixdof;
 	int set_mode;
 	bool have_set_mode;
+	bool get_mode;
+	bool native_probe;
 };
 
 static double
@@ -77,6 +79,8 @@ usage(const char *argv0)
 	        "  --predict S      prediction horizon in seconds (default 0)\n"
 	        "  --set-mode M     set display mode first, by name or vendor id\n"
 	        "                   e.g. 3840x1200@90-sbs or 0x45\n"
+	        "  --get-mode       print the device's display-mode state and exit\n"
+	        "  --native-probe   also query native (Gen2) mode state; BLOCKS on Carina\n"
 	        "  --reset          reset the VIO origin before sampling\n"
 	        "  --3dof           select 3DoF instead of 6DoF\n"
 	        "  --json           emit one JSON object per sample\n"
@@ -138,6 +142,10 @@ main(int argc, char **argv)
 			}
 			o.set_mode = m->vendor_mode;
 			o.have_set_mode = true;
+		} else if (strcmp(a, "--native-probe") == 0) {
+			o.native_probe = true;
+		} else if (strcmp(a, "--get-mode") == 0) {
+			o.get_mode = true;
 		} else if (strcmp(a, "--reset") == 0) {
 			o.reset = true;
 		} else if (strcmp(a, "--3dof") == 0) {
@@ -215,13 +223,42 @@ main(int argc, char **argv)
 
 	printf("device_type=%d (2 == XR_DEVICE_TYPE_VITURE_CARINA)\n", xr_device_provider_get_device_type(h));
 
-	if (o.have_set_mode) {
-		const struct viture_mode_info *m = viture_mode_lookup(o.set_mode);
+	if (o.native_probe) {
+		/*
+		 * Opt-in, because these block on devices that do not implement native
+		 * mode: on the Carina Luma Ultra the query never returns. Only ask when
+		 * the caller knows what they are probing.
+		 */
+		printf("native: state=%d display=%d\n", xr_device_provider_native_get_mode(h),
+		       xr_device_provider_native_get_display_mode(h));
+	}
+
+	if (o.have_set_mode || o.get_mode) {
 		const int before = xr_device_provider_get_display_mode(h);
-		const int sr = xr_device_provider_set_display_mode(h, o.set_mode);
-		const int after = xr_device_provider_get_display_mode(h);
-		printf("display mode: before=0x%02X set(0x%02X, %s)=%d after=0x%02X\n", before, o.set_mode,
-		       m ? m->name : "?", sr, after);
+		if (o.get_mode) {
+			printf("display mode: standard=0x%02X (%s)\n", before,
+			       viture_mode_lookup(before) ? viture_mode_lookup(before)->name : "unknown");
+		}
+
+		if (o.have_set_mode) {
+			const struct viture_mode_info *m = viture_mode_lookup(o.set_mode);
+			const int sr = xr_device_provider_set_display_mode(h, o.set_mode);
+			if (sr == VITURE_GLASSES_SUCCESS) {
+				printf("set(0x%02X, %s) -> ok\n", o.set_mode, m ? m->name : "?");
+			} else {
+				printf("set(0x%02X, %s) -> %d (refused)\n", o.set_mode, m ? m->name : "?", sr);
+				printf("  A pinned device refuses every set (during bring-up every set returned\n"
+				       "  -3 until the glasses were replugged). Read-back is also\n"
+				       "  asynchronous: re-query, and check whether X re-presented the timing.\n");
+			}
+		}
+
+		if (o.get_mode) {
+			xr_device_provider_stop(h);
+			xr_device_provider_shutdown(h);
+			xr_device_provider_destroy(h);
+			return 0;
+		}
 	}
 
 	if (o.reset) {

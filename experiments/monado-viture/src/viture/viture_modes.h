@@ -75,3 +75,19 @@ viture_mode_default(void);
  */
 void
 viture_mode_per_eye(const struct viture_mode_info *mode, uint32_t *w, uint32_t *h);
+
+/*!
+ * Native-mode (Gen2) equivalent of a standard display mode id, or -1 when there
+ * is none.
+ *
+ * The native opcode space reuses the same byte values with *different* meanings,
+ * so a standard id has to be translated before it goes to
+ * xr_device_provider_native_set_display_mode. Sending the standard id there
+ * selects the wrong timing, and sending a standard id to set_display_mode while
+ * the device is in native mode is what made mode switching fail with a bare
+ * negative code during bring-up.
+ *
+ * @ingroup drv_viture
+ */
+int
+viture_mode_native_equiv(int vendor_mode);
