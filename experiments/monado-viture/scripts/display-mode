@@ -48,9 +48,9 @@ esac
 
 [ -x "$TOOL" ] || { echo "no $TOOL (build it: tools/build-pose-dump.sh)" >&2; exit 1; }
 command -v xrandr >/dev/null || { echo "no xrandr" >&2; exit 1; }
-xrandr --query >/dev/null 2>&1 || { echo "cannot reach X on $DISPLAY" >&2; exit 1; }
+timeout 8 xrandr --query >/dev/null 2>&1 || { echo "X on $DISPLAY did not answer within 8 s (wedged?)" >&2; exit 1; }
 
-OUT=$(xrandr --query | awk '/ connected/{print $1; exit}')
+OUT=$(timeout 8 xrandr --query | awk '/ connected/{print $1; exit}')
 [ -n "$OUT" ] || { echo "no connected X output" >&2; exit 1; }
 echo "output=$OUT  target=$MODE_NAME  (X wants $X_MODE@$X_RATE)"
 
@@ -70,7 +70,8 @@ LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 echo "--- waiting for X to offer $X_MODE"
 offered=0
 for _ in $(seq 1 20); do
-	if xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | grep -qE "^[[:space:]]+${X_MODE}[[:space:]]"; then
+	if timeout 8 xrandr --query 2>/dev/null | sed -n "/^${OUT}/,/^[A-Z]/p" |
+		grep -qE "^[[:space:]]+${X_MODE}[[:space:]]"; then
 		offered=1
 		break
 	fi
@@ -84,11 +85,18 @@ fi
 
 # 3. point X at it
 echo "--- setting $OUT to $X_MODE@$X_RATE"
-xrandr --output "$OUT" --mode "$X_MODE" --rate "$X_RATE" --primary --pos 0x0
+# Bounded on purpose: with the GPU display engine wedged the modeset ioctl *blocks*
+# instead of failing, and an unbounded call hung an X server on 2026-10-04.
+if ! timeout 20 xrandr --output "$OUT" --mode "$X_MODE" --rate "$X_RATE" --primary --pos 0x0; then
+	echo "    xrandr did not complete (hung or refused)." >&2
+	echo "    Nothing in RandR will fix a wedged display engine: restart the display" >&2
+	echo "    stack (systemctl restart gdm, or reboot) and run this again." >&2
+	exit 1
+fi
 sleep 2
-xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | head -4
-xrandr --query --current | head -1
-xrandr --listmonitors
+timeout 8 xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | head -4
+timeout 8 xrandr --query --current | head -1
+timeout 8 xrandr --listmonitors
 
 if [ "$PATTERN" = 1 ]; then
 	P="$ROOT/docs/stereo-test-pattern.png"
