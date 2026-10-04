@@ -63,4 +63,5 @@ initialize succeeded in ~0.46 s with `CarinaDeviceProvider initialized
 `cache/carina` stayed empty (no YAML, no grids). Outcome remains **B**.
 Treat factory K/R/T as unavailable until a cache dump or public API appears.
 
-Do not claim a model-default K/R/T from this. Child 4 stays planned.
+Offline ChArUco + OpenCV fisheye tooling: `docs/carina-calib.md` / `xr-wdw.4`.
+Do not substitute a model-default K/R/T for a solved artifact.

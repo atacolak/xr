@@ -29,7 +29,9 @@ On a grayscale preview, **SENSOR** starts a 30 s lossless session
 `camera.index.jsonl`, `pose.jsonl`, `imu.bin`, `vsync.jsonl`). Replay:
 `console/recorder/sensor_replay.py <dir>`. Distinct from RGB **RECORD**.
 Clocks and plane identity: `docs/carina-measurements.md`. Factory calib hunt:
-`docs/carina-calibration.md`.
+`docs/carina-calibration.md`. Offline ChArUco fisheye stereo solve (board
+units, not metres): `console/recorder/carina_calib.py` /
+`docs/carina-calib.md`.
 
 The microphone selector enumerates capture-capable Android inputs: built-in
 mics, USB, wired headset, Bluetooth SCO/LE. Telephony RX, remote submix, and
