@@ -31,11 +31,31 @@ BG = (28, 30, 34)
 
 SQUARES = [
     # colour,             x in left half, y,  side, disparity px
-    ((255, 210, 60), 330, 440, 240, -56),   # yellow, nearer
-    ((120, 255, 140), 1490, 440, 240, 0),   # green, at panel plane
-    ((255, 130, 220), 2660, 440, 240, 56),  # magenta, farther
+    ((255, 210, 60), 260, 440, 240, -32),    # yellow, nearer
+    ((120, 255, 140), 840, 440, 240, 0),     # green, at panel plane
+    ((255, 130, 220), 1420, 440, 240, 32),   # magenta, farther
 ]
 EDGE_BAR_W = 18
+
+
+def check_layout() -> None:
+    """Every copy must land inside its own half, or an eye sees the wrong picture.
+
+    This check exists because the first version of this pattern put the magenta
+    square's left-eye copy at x=2660 -- outside the left half -- so the left eye saw
+    two squares instead of three while a stray copy leaked into the right eye's half.
+    """
+    problems = []
+    for colour, x_left, y, side, d in SQUARES:
+        if x_left < 0 or x_left + side > MID:
+            problems.append(f"left copy of {colour} spans {x_left}..{x_left + side}, outside 0..{MID}")
+        x_right = x_left + MID + d
+        if x_right < MID or x_right + side > W:
+            problems.append(f"right copy of {colour} spans {x_right}..{x_right + side}, outside {MID}..{W}")
+    if problems:
+        for p in problems:
+            print(f"  LAYOUT ERROR: {p}")
+        raise SystemExit(1)
 
 
 def rect(img: list[bytearray], x0: int, y0: int, w: int, h: int, colour: tuple[int, int, int]) -> None:
@@ -69,11 +89,14 @@ def write_png(path: pathlib.Path, img: list[bytearray]) -> None:
 
 
 def main() -> int:
+    check_layout()
     out = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "docs/stereo-test-pattern.png")
     out.parent.mkdir(parents=True, exist_ok=True)
     write_png(out, build())
     print(f"wrote {out} ({out.stat().st_size} bytes)")
-    print("  yellow d=-56 (nearer), green d=0 (panel plane), magenta d=+56 (farther), white edge bars")
+    for colour, x, y, side, d in SQUARES:
+        print(f"  left x={x:<5} right x={x + MID + d:<5} disparity {d:+d} px")
+    print("  white bars at both outer edges; every copy checked to sit inside its own half")
     return 0
 
 
