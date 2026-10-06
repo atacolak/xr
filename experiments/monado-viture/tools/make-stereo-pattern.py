@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 """Generate the side-by-side stereo test pattern used for panel bring-up.
 
-Three squares, one per disparity, so a human looking through the glasses can
-answer "is this actually stereo?" without any code running:
+Designed to be judged through the glasses, on a black background: on a see-through
+OLED, black is transparent, so the operator sees the real room with the test shapes
+floating in it.
 
-  yellow  disparity -56 px  -> appears nearer than the panel plane
-  green   disparity   0 px  -> appears at the panel plane
-  magenta disparity +56 px  -> appears farther than the panel plane
+Two rows:
 
-plus a white bar at each outer edge, which is only visible in both eyes at once
-if each eye really is getting its own half of the frame.
+  reference row (top, white)   all at disparity 0 -> sits at the panel plane. This is
+                               the anchor: nothing here should look near or far.
+  depth row (bottom, coloured) a monotonic staircase, nearest on the left:
+                               white 0 px, cyan -16, green -32, yellow -48, red -64.
+                               Each step is ~0.35 deg of convergence, so the whole row
+                               should read as a ramp receding to the right.
 
-Convention: the right half draws its copy of a square at
-`x_left + half_width + disparity`. Negative disparity (crossed) reads as nearer.
+Negative disparity = crossed = nearer (the right eye's copy is shifted left relative
+to the left eye's). Positive is capped small on purpose: uncrossed disparity saturates
+(a few pixels already reads as "at infinity"), so all the usable range is on the near
+side.
+
+A white bar at each outer edge is a per-eye marker: each eye sees the bar on its own
+outer edge only, which is how you tell both halves are being displayed at once.
 
 Usage:
-    tools/make-stereo-pattern.py [out.png]        # default docs/stereo-test-pattern.png
+    tools/make-stereo-pattern.py [out.png]     # default docs/stereo-test-pattern.png
 """
 
 from __future__ import annotations
@@ -27,31 +35,40 @@ import zlib
 
 W, H = 3840, 1200
 MID = W // 2
-BG = (28, 30, 34)
+BG = (0, 0, 0)  # transparent through the glasses
 
-SQUARES = [
-    # colour,             x in left half, y,  side, disparity px
-    ((255, 210, 60), 260, 440, 240, -32),    # yellow, nearer
-    ((120, 255, 140), 840, 440, 240, 0),     # green, at panel plane
-    ((255, 130, 220), 1420, 440, 240, 32),   # magenta, farther
+# (colour, x in the LEFT half, y, side, disparity px). Left copy at x, right copy at
+# x + MID + d; check_layout() refuses any entry whose copies cross the half boundary.
+REFERENCE = [
+    ((255, 255, 255), 300, 180, 120, 0),
+    ((255, 255, 255), 960, 180, 120, 0),
+    ((255, 255, 255), 1620, 180, 120, 0),
+]
+RAMP = [
+    ((255, 255, 255), 160, 700, 180, 0),     # at the panel plane
+    ((120, 220, 255), 540, 700, 180, -16),   # nearer
+    ((120, 255, 140), 920, 700, 180, -32),
+    ((255, 230, 120), 1300, 700, 180, -48),
+    ((255, 110, 110), 1680, 700, 180, -64),  # nearest
 ]
 EDGE_BAR_W = 18
 
 
 def check_layout() -> None:
-    """Every copy must land inside its own half, or an eye sees the wrong picture.
+    """Every copy must sit inside its own half, or an eye sees the wrong picture.
 
-    This check exists because the first version of this pattern put the magenta
-    square's left-eye copy at x=2660 -- outside the left half -- so the left eye saw
-    two squares instead of three while a stray copy leaked into the right eye's half.
+    This exists because the first version put the magenta square's left-eye copy at
+    x=2660 -- outside the left half -- so that eye saw fewer squares than the other
+    while a stray copy leaked into its neighbour's half.
     """
     problems = []
-    for colour, x_left, y, side, d in SQUARES:
-        if x_left < 0 or x_left + side > MID:
-            problems.append(f"left copy of {colour} spans {x_left}..{x_left + side}, outside 0..{MID}")
-        x_right = x_left + MID + d
-        if x_right < MID or x_right + side > W:
-            problems.append(f"right copy of {colour} spans {x_right}..{x_right + side}, outside {MID}..{W}")
+    for row, entries in (("reference", REFERENCE), ("ramp", RAMP)):
+        for colour, x_left, y, side, d in entries:
+            if x_left < 0 or x_left + side > MID:
+                problems.append(f"{row}: left copy {colour} spans {x_left}..{x_left + side}, outside 0..{MID}")
+            x_right = x_left + MID + d
+            if x_right < MID or x_right + side > W:
+                problems.append(f"{row}: right copy {colour} spans {x_right}..{x_right + side}, outside {MID}..{W}")
     if problems:
         for p in problems:
             print(f"  LAYOUT ERROR: {p}")
@@ -70,7 +87,7 @@ def rect(img: list[bytearray], x0: int, y0: int, w: int, h: int, colour: tuple[i
 
 def build() -> list[bytearray]:
     img = [bytearray(BG * W) for _ in range(H)]
-    for colour, x_left, y, side, d in SQUARES:
+    for colour, x_left, y, side, d in REFERENCE + RAMP:
         rect(img, x_left, y, side, side, colour)              # left eye
         rect(img, x_left + MID + d, y, side, side, colour)    # right eye
     rect(img, 0, 0, EDGE_BAR_W, H, (255, 255, 255))
@@ -94,9 +111,11 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     write_png(out, build())
     print(f"wrote {out} ({out.stat().st_size} bytes)")
-    for colour, x, y, side, d in SQUARES:
-        print(f"  left x={x:<5} right x={x + MID + d:<5} disparity {d:+d} px")
-    print("  white bars at both outer edges; every copy checked to sit inside its own half")
+    print("  reference row (white, y=180): all disparity 0 -- the panel plane")
+    print("  depth row (y=700), nearest first:")
+    for colour, x, y, side, d in RAMP:
+        print(f"    left x={x:<5} right x={x + MID + d:<5} disparity {d:+d} px   {colour}")
+    print("  black background is transparent on the OLED; white bars mark each eye's outer edge")
     return 0
 
 
