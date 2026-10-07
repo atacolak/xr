@@ -53,8 +53,9 @@ def load_renderer():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fps", type=int, default=60)
-    ap.add_argument("--res", default="960x600", help="per-eye render size (scaled up for the panels)")
+    ap.add_argument("--fps", type=int, default=90,
+                    help="panel refresh is 90 Hz; the render+encode chain sustains ~90 at 800x500/eye")
+    ap.add_argument("--res", default="800x500", help="per-eye render size (scaled up for the panels)")
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)
     ap.add_argument("--no-presenter", action="store_true", help="render and measure only")
@@ -117,12 +118,11 @@ def main() -> int:
         encoder = subprocess.Popen(
             ["ffmpeg", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
              "-s", f"{frame_w}x{frame_h}", "-r", str(a.fps), "-i", "-",
-             "-vf", f"scale={screen_w}:{screen_h}:flags=fast_bilinear",
              "-pix_fmt", "bgra", "-f", "rawvideo", "-"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
         assert encoder.stdin is not None and encoder.stdout is not None
         if xpresent.exists():
-            player = subprocess.Popen([str(xpresent), str(screen_w), str(screen_h)],
+            player = subprocess.Popen([str(xpresent), str(frame_w), str(frame_h), str(screen_w), str(screen_h)],
                                       stdin=encoder.stdout, env=env)
         else:  # fallback player; slower, and it will say so
             player = subprocess.Popen(

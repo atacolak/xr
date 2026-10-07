@@ -84,11 +84,19 @@ class Camera:
 
 # Boxes: x, y, depth range (near, far), half size, colour, phase offset.
 BOXES = [
+    # x, y, depth range (near, far) in metres, half size, colour, phase
     (-0.62, 0.00, (1.45, 3.60), 0.17, (255, 96, 96), 0.00),
     (0.00, -0.22, (1.75, 4.30), 0.15, (110, 255, 150), 0.28),
     (0.62, 0.16, (1.95, 4.70), 0.13, (140, 200, 255), 0.55),
     (-0.30, 0.28, (2.30, 5.40), 0.11, (255, 220, 120), 0.79),
     (0.34, -0.10, (2.10, 5.00), 0.12, (215, 150, 255), 0.91),
+    (-1.15, -0.05, (2.60, 6.80), 0.14, (255, 170, 90), 0.13),
+    (1.05, 0.05, (2.40, 6.20), 0.13, (150, 255, 220), 0.44),
+    (-0.05, 0.34, (3.20, 8.00), 0.10, (255, 255, 255), 0.66),
+    (0.85, -0.28, (3.00, 7.40), 0.12, (200, 190, 255), 0.35),
+    (-0.75, -0.34, (3.60, 9.00), 0.11, (255, 140, 200), 0.58),
+    (1.45, 0.24, (4.20, 10.5), 0.16, (170, 200, 255), 0.21),
+    (-1.50, 0.30, (4.00, 10.0), 0.15, (200, 255, 170), 0.72),
 ]
 
 
@@ -116,13 +124,13 @@ def shaded(colour, factor: float, z: float) -> tuple[int, int, int]:
 
 def draw_floor(d: ImageDraw.ImageDraw, cam: Camera, eye: int, z_near: float, z_far: float) -> None:
     """Receding grid: the perspective cue, projected for this eye like everything else."""
-    for i in range(16):
-        z = z_near * (z_far / z_near) ** (i / 15.0)
+    for i in range(22):
+        z = z_near * (z_far / z_near) ** (i / 21.0)
         x0, y0 = cam.project((-4.0, FLOOR_Y, z), eye)
         x1, y1 = cam.project((4.0, FLOOR_Y, z), eye)
         shade = int(150 * (z_near / z) ** 0.5)
         d.line([(x0, y0), (x1, y1)], fill=(shade, shade, shade), width=2)
-    for j in range(-7, 8):
+    for j in range(-13, 14):
         x = j * 0.55
         x0, y0 = cam.project((x, FLOOR_Y, z_near), eye)
         x1, y1 = cam.project((x, FLOOR_Y, z_far), eye)
@@ -133,37 +141,44 @@ def draw_floor(d: ImageDraw.ImageDraw, cam: Camera, eye: int, z_near: float, z_f
 
 def draw_box(d: ImageDraw.ImageDraw, cam: Camera, x: float, y: float, z: float, half: float,
              colour: tuple[int, int, int], eye: int) -> None:
-    """Draw a real box: exact projected quads, with the faces that eye can actually see.
+    """A real box: all six faces, back-face culled, shaded by their own normal.
 
-    Two bugs lived here and both were visible through the glasses: the front face was
-    drawn as the bounding-box *rectangle* of two projected corners (a perspective quad
-    is not a rectangle, so the faces did not line up and the box read as a flimsy card),
-    and only the right-hand side face was ever drawn, so any box to the right of an eye
-    showed no side at all.
+    The previous version guessed which side face was visible from the box centre, which
+    made faces pop in and out of existence as a box crossed the eye axis — the "parts
+    clipping in and out" the operator reported. Culling by the actual face normal has no
+    such boundary, and lighting the faces separately makes the solids read as solids.
     """
-    z_near, z_far = z - half, z + half
-    if z_near < 0.35:
+    if z - half < 0.35:
         return
     lo, hi = -half, half
-
-    def corner(dx, dy, dz):
-        return cam.project((x + dx, y + dy, z + dz), eye)
-
-    # Which faces this eye can see: compare the box centre with the eye in camera space.
+    # local face normals with the outward direction, and their vertex sets
+    faces = (
+        ((0.0, 0.0, -1.0), ((lo, lo, -half), (hi, lo, -half), (hi, hi, -half), (lo, hi, -half))),   # front
+        ((0.0, 0.0, 1.0), ((lo, lo, half), (hi, lo, half), (hi, hi, half), (lo, hi, half))),        # back
+        ((1.0, 0.0, 0.0), ((half, lo, -half), (half, lo, half), (half, hi, half), (half, hi, -half))),   # +x
+        ((-1.0, 0.0, 0.0), ((-half, lo, -half), (-half, lo, half), (-half, hi, half), (-half, hi, -half))),  # -x
+        ((0.0, 1.0, 0.0), ((lo, half, -half), (hi, half, -half), (hi, half, half), (lo, half, half))),   # top
+        ((0.0, -1.0, 0.0), ((lo, -half, -half), (hi, -half, -half), (hi, -half, half), (lo, -half, half))),  # bottom
+    )
+    # light from above and to the left-front, in world terms
+    light = np.array([-0.45, 0.80, -0.40])
+    light = light / np.linalg.norm(light)
     centre = cam.to_camera((x, y, z), eye)
-    side_dx = -half if centre[0] > 0 else half          # box right of eye -> its left face
-    top_dy = half if centre[1] < 0 else -half           # box below eye -> its top face
 
-    # Side face (quad), then top/bottom face (quad), then the front face last.
-    quad_side = [corner(side_dx, lo, -half), corner(side_dx, lo, half),
-                 corner(side_dx, hi, half), corner(side_dx, hi, -half)]
-    d.polygon(quad_side, fill=shaded(colour, 0.62, z))
-    quad_top = [corner(lo, top_dy, -half), corner(hi, top_dy, -half),
-                corner(hi, top_dy, half), corner(lo, top_dy, half)]
-    d.polygon(quad_top, fill=shaded(colour, 1.25, z))
-    quad_front = [corner(lo, hi, -half), corner(hi, hi, -half),
-                  corner(hi, lo, -half), corner(lo, lo, -half)]
-    d.polygon(quad_front, fill=shaded(colour, 1.0, z))
+    visible = []
+    for normal, verts in faces:
+        n_world = np.array(normal, dtype=float)
+        n_cam = cam.rot.T @ n_world
+        v = np.array(verts[0], dtype=float) - centre      # from box centre to a face corner
+        v_cam = cam.rot.T @ v
+        if float(np.dot(n_cam, v_cam)) >= 0.0:            # back-facing -> skip
+            continue
+        shade = 0.35 + 0.65 * max(0.0, float(np.dot(n_world, light)))
+        visible.append((normal[2], [cam.project((x + vx, y + vy, z + vz), eye) for vx, vy, vz in verts],
+                        shaded(colour, shade, z)))
+    # painter's order within the box: draw the far faces first
+    for _, pts, c in sorted(visible, key=lambda it: it[0]):
+        d.polygon(pts, fill=c)
 
 
 def draw_plane_frame(d: ImageDraw.ImageDraw, cam: Camera, eye: int) -> None:
@@ -177,7 +192,7 @@ def draw_plane_frame(d: ImageDraw.ImageDraw, cam: Camera, eye: int) -> None:
 def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
     img = Image.new("RGB", (EYE_W, EYE_H), (0, 0, 0))  # black = transparent on the OLED
     d = ImageDraw.Draw(img)
-    draw_floor(d, cam, eye, 1.2, 9.0)
+    draw_floor(d, cam, eye, 1.2, 26.0)
     draw_plane_frame(d, cam, eye)
 
     # Painter's algorithm: farthest first, so nearer boxes occlude farther ones.
