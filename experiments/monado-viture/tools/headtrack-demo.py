@@ -54,9 +54,10 @@ def load_renderer():
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--fps", type=int, default=60,
-                    help="the panel is 90 Hz, but this CPU pipeline (render -> ffmpeg scale -> XShm "
-                         "blit) tops out near 60; 90 needs a GPU presenter")
+    ap.add_argument("--fps", type=int, default=90,
+                    help="target frames/s. The Luma Ultra refreshes at 90 Hz, and the default "
+                         "640x400 per eye measured 119 fps of render headroom at 3x upscale, "
+                         "so 90 is attainable when the panel is actually driving the swap.")
     ap.add_argument("--res", default="640x400", help="per-eye render size (scaled up for the panels)")
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)

@@ -179,8 +179,10 @@ main(int argc, char **argv)
 		glXSwapIntervalEXT =
 		    (PFNGLXSWAPINTERVALEXTPROC)glXGetProcAddress((const GLubyte *)"glXSwapIntervalEXT");
 	}
+	int vsync_on = 0;
 	if (glXSwapIntervalEXT != NULL) {
 		glXSwapIntervalEXT(dpy, glxwin, 1);
+		vsync_on = 1;
 	} else {
 		fprintf(stderr, "xpresent-gl: vsync unavailable (no GLX_EXT_swap_control)\n");
 	}
@@ -241,10 +243,26 @@ main(int argc, char **argv)
 
 		frames++;
 		report_frames++;
+		
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 		const double now = (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
 		if (now - report_start >= 2.0) {
-			fprintf(stderr, "xpresent-gl: %.1f fps\n", (double)report_frames / (now - report_start));
+			const double elapsed = now - report_start;
+			const double fps = (double)report_frames / elapsed;
+			fprintf(stderr, "xpresent-gl: %.1f fps\n", fps);
+			// A real attached display never paces a swap slower than about 50 ms
+			// (20 Hz). A window on a server whose output is disconnected can: the
+			// vblank it waits on is a dummy timer, which paces at roughly 1 Hz, and
+			// that looks exactly like a hung demo. Measure, and drop the throttle if
+			// it is nonsense rather than waiting for a human to notice.
+			if (vsync_on && report_frames > 1 && (elapsed / (double)report_frames) > 0.05) {
+				glXSwapIntervalEXT(dpy, glxwin, 0);
+				vsync_on = 0;
+				fprintf(stderr,
+				        "xpresent-gl: vsync off -- swap interval 1 was pacing at %.0f ms/frame; no attached "
+				        "display does that (an unconnected output waits on a dummy vblank)\n",
+				        1000.0 * elapsed / (double)report_frames);
+			}
 			report_frames = 0;
 			report_start = now;
 		}
