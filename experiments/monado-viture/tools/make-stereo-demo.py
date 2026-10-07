@@ -58,16 +58,21 @@ class Camera:
         cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
         cp, sp = math.cos(math.radians(pitch)), math.sin(math.radians(pitch))
         cr, sr = math.cos(math.radians(roll)), math.sin(math.radians(roll))
-        # world -> camera is the inverse rotation; order yaw, pitch, roll
+        # Must match the convention the pose is decomposed with, or the mapping is skewed
+        # for combined motions: R = Ry(yaw) * Rx(pitch) * Rz(roll) (Y-up, as the SDK poses
+        # are, and as viture-pose-dump --self-test-axes verifies).
         ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]])
         rx = np.array([[1, 0, 0], [0, cp, -sp], [0, sp, cp]])
         rz = np.array([[cr, -sr, 0], [sr, cr, 0], [0, 0, 1]])
-        self.rot = rz @ rx @ ry
+        self.rot = ry @ rx @ rz
         self.eye_offset = np.array([IPD / 2.0, 0.0, 0.0])
 
     def to_camera(self, p, eye: int):
         """World point -> camera-space, for one eye (-1 left, +1 right)."""
-        eye_world = self.rot.T @ (self.eye_offset * eye)
+        # self.rot maps camera space -> world, so the (camera-space) eye offset must be
+        # rotated by rot, not rot.T: with rot.T the stereo baseline is rotated wrongly and
+        # a roll tips it out of horizontal.
+        eye_world = self.rot @ (self.eye_offset * eye)
         return self.rot.T @ (np.asarray(p, dtype=float) - self.pos - eye_world)
 
     def project(self, p, eye: int) -> tuple[float, float]:

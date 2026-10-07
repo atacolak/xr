@@ -33,6 +33,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import signal
 import subprocess
 import sys
 import time
@@ -59,6 +60,8 @@ def main() -> int:
     ap.add_argument("--invert-yaw", action="store_true")
     ap.add_argument("--invert-pitch", action="store_true")
     ap.add_argument("--invert-roll", action="store_true")
+    ap.add_argument("--no-recenter", action="store_true",
+                    help="use absolute pose instead of pose relative to the first samples")
     a = ap.parse_args()
 
     eye_w, eye_h = (int(v) for v in a.res.lower().split("x"))
@@ -104,6 +107,32 @@ def main() -> int:
           f"presenter: {'xpresent' if xpresent.exists() and not a.no_presenter else 'none/fallback'}", flush=True)
     print("turn / nod / tilt your head -- the scene should stay put in the world", flush=True)
 
+    # Recentring. An HMD view is always driven by orientation *relative* to a reference:
+    # the device reports an absolute gravity-referenced pose, and whatever the glasses
+    # happen to be tilted at when the demo starts (on a desk: tens of degrees of pitch)
+    # would otherwise aim the camera there and push the scene out of frame. The vendor
+    # demo keeps a stored reference for the same reason; the SDK exposes reset_pose_carina.
+    # Re-centring can be requested at runtime (the IMU's yaw drifts; that is inherent to
+    # 3DoF and the SDK's own answer is to re-anchor: reset_pose_carina). SIGUSR1 does it:
+    #   kill -USR1 $(pgrep -f headtrack-demo)
+    recenter_request = [True]
+
+    def on_usr1(_sig, _frm):
+        recenter_request[0] = True
+
+    signal.signal(signal.SIGUSR1, on_usr1)
+
+    ref = None
+    ref_acc: list[tuple[float, float, float]] = []
+
+    def ang_diff(a1: float, a2: float) -> float:
+        d = a1 - a2
+        while d > 180.0:
+            d -= 360.0
+        while d < -180.0:
+            d += 360.0
+        return d
+
     interval = 1.0 / float(a.fps)
     next_deadline = time.monotonic()
     n = 0
@@ -120,6 +149,27 @@ def main() -> int:
             yaw = d.get("yaw", 0.0) * (-1.0 if a.invert_yaw else 1.0)
             pitch = d.get("pitch", 0.0) * (-1.0 if a.invert_pitch else 1.0)
             roll = d.get("roll", 0.0) * (-1.0 if a.invert_roll else 1.0)
+            if not a.no_recenter:
+                if recenter_request[0]:
+                    recenter_request[0] = False
+                    ref = None
+                    ref_acc.clear()
+                if ref is None:
+                    # Reference the first *stable* samples, not the startup transient: the
+                    # device reports 'unstable' while it settles, and its values there are
+                    # placeholders (zeros), which would make every later pose look like a
+                    # large offset and push the scene out of frame.
+                    if d.get("status", 1) == 0:
+                        ref_acc.append((yaw, pitch, roll))
+                    if len(ref_acc) >= 20:
+                        ref = tuple(sum(v[i] for v in ref_acc) / len(ref_acc) for i in range(3))
+                        print(f"recentred on yaw {ref[0]:+.1f} pitch {ref[1]:+.1f} roll {ref[2]:+.1f} "
+                              f"({len(ref_acc)} stable samples)", flush=True)
+                    yaw, pitch, roll = 0.0, 0.0, 0.0
+                else:
+                    yaw = ang_diff(yaw, ref[0])
+                    pitch = ang_diff(pitch, ref[1])
+                    roll = ang_diff(roll, ref[2])
             last = (yaw, pitch, roll)
 
             cam = demo.Camera(pos=(0.0, 0.0, 0.0), yaw=yaw, pitch=pitch, roll=roll)
