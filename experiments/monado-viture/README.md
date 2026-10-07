@@ -115,15 +115,21 @@ position stays at the origin, but it *takes* a position, so a 6DoF pose drops in
 
 ### presenters (`--presenter auto|gl|shm`)
 
-- `shm` = `tools/xpresent`: XShmPutImage, full-size frames. ~60 fps ceiling, because ffmpeg
-  has to scale and the pipe then carries 18.4 MB/frame.
-- `gl` = `tools/xpresent-gl`: small frames over the pipe, GPU scales. The only way to the
-  panel's 90 Hz here. `auto` prefers it once built.
+- `shm` = `tools/xpresent`: XShmPutImage, full-size frames, ffmpeg does the scale. 78 fps
+  measured in the demo.
+- `gl` = `tools/xpresent-gl`: small frames over the pipe, GPU scales. 89 fps measured at a
+  90 Hz target, even on llvmpipe, and the default (`auto`) once built. It paces the swap to
+  the panel when `GLX_EXT_swap_control` is there, and **measures its own frame interval**: if
+  that interval is slower than any attached display could be (a window whose output is
+  disconnected waits on a dummy vblank at roughly 1 Hz), it drops the throttle instead of
+  leaving a demo that looks hung. Measured on the unplugged server: 1.5 fps -> 336 fps.
 - XRender scaling is not an option on this X server: `ShmCreatePixmap` returns
   `BadImplementation`, and a picture-transform composite renders *nothing* (both measured).
 
 ### knobs that matter
 
+- `--fps` (90 default): the panel's own refresh. The GL presenter paces the swap to it, so
+  this and the panel agree; the CPU path cannot follow it.
 - `--fov` (44.9 default): the Luma Ultra is 52 deg diagonal, ~44.9 horizontal on an 8:5 panel.
   If head motion feels too fast or too slow, this is the number to calibrate against the room.
 - `--smooth` (0.015 s) and `--deadband` (0.03 deg): the deadband kills sensor micro-jitter
