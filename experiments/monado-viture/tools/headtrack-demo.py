@@ -60,6 +60,18 @@ def main() -> int:
     ap.add_argument("--invert-yaw", action="store_true")
     ap.add_argument("--invert-pitch", action="store_true")
     ap.add_argument("--invert-roll", action="store_true")
+    ap.add_argument("--fov", type=float, default=44.9,
+                    help="per-eye horizontal FOV in degrees; the Luma Ultra is 52 deg "
+                         "diagonal, which is ~44.9 deg horizontal on an 8:5 panel. This "
+                         "must match the optics or head motion feels too fast/slow, "
+                         "because the panel stretches the render across the real FOV.")
+    ap.add_argument("--src", choices=("cb", "poll"), default="cb",
+                    help="pose source: 'cb' uses the device callback (~800 Hz, gravity-stable, "
+                         "100%% stable in testing); 'poll' uses get_gl_pose_carina, which drifts "
+                         "(measured 30 deg of pitch drift while stationary).")
+    ap.add_argument("--predict", type=float, default=0.0,
+                    help="seconds of pose prediction, to compensate pipeline latency "
+                         "(the SDK predicts internally). 0 disables.")
     ap.add_argument("--no-recenter", action="store_true",
                     help="use absolute pose instead of pose relative to the first samples")
     a = ap.parse_args()
@@ -70,6 +82,7 @@ def main() -> int:
 
     demo = load_renderer()
     demo.EYE_W, demo.EYE_H = eye_w, eye_h   # keep the 8:5 aspect so the FOV math holds
+    demo.FOV_H_DEG = a.fov
 
     tool = ROOT / "tools" / "viture-pose-dump"
     xpresent = ROOT / "tools" / "xpresent"
@@ -81,7 +94,12 @@ def main() -> int:
     env["LD_LIBRARY_PATH"] = f"{SDK}/x86_64{os.pathsep}{env.get('LD_LIBRARY_PATH', '')}"
     env["DISPLAY"] = env.get("DISPLAY", ":1")
 
-    pose = subprocess.Popen([str(tool), "--3dof", "--seconds", str(a.seconds), "--json"],
+    pose_args = [str(tool), "--3dof", "--seconds", str(a.seconds), "--json", "--auto-exposure"]
+    if a.src == "cb":
+        pose_args.append("--src-cb")
+    else:
+        pose_args += ["--predict", str(a.predict)]
+    pose = subprocess.Popen(pose_args,
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
     assert pose.stdout is not None
 
@@ -124,6 +142,7 @@ def main() -> int:
 
     ref = None
     ref_acc: list[tuple[float, float, float]] = []
+    warmup = [0]
 
     def ang_diff(a1: float, a2: float) -> float:
         d = a1 - a2
@@ -155,11 +174,12 @@ def main() -> int:
                     ref = None
                     ref_acc.clear()
                 if ref is None:
-                    # Reference the first *stable* samples, not the startup transient: the
-                    # device reports 'unstable' while it settles, and its values there are
-                    # placeholders (zeros), which would make every later pose look like a
-                    # large offset and push the scene out of frame.
-                    if d.get("status", 1) == 0:
+                    # Reference the *settled* pose. The device emits placeholders (zeros)
+                    # briefly after start regardless of source, so drop a warm-up window
+                    # first; otherwise the reference is zero and every later pose reads as a
+                    # large offset that pushes the scene out of frame.
+                    warmup[0] += 1
+                    if warmup[0] > 30 and d.get("status", 1) == 0:
                         ref_acc.append((yaw, pitch, roll))
                     if len(ref_acc) >= 20:
                         ref = tuple(sum(v[i] for v in ref_acc) / len(ref_acc) for i in range(3))

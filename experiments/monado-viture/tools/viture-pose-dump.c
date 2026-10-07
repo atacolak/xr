@@ -52,6 +52,10 @@ struct options
 	bool have_set_mode;
 	bool get_mode;
 	bool native_probe;
+	bool pose_cb;
+	bool auto_exposure;
+	bool src_cb;
+	const char *cache;
 };
 
 static double
@@ -81,6 +85,11 @@ usage(const char *argv0)
 	        "                   e.g. 3840x1200@90-sbs or 0x45\n"
 	        "  --get-mode       print the device's display-mode state and exit\n"
 	        "  --self-test-axes verify the Y-up yaw/pitch/roll extraction and exit\n"
+	        "  --pose-cb        register the pose callback too (tests the push path)\n"
+	        "  --auto-exposure  call set_auto_exposure_carina after start (as the app does)\n"
+	        "  --src-cb         take poses from the device callback instead of polling\n"
+	        "                   (the callback is ~800 Hz and gravity-stable; polling drifts)\n"
+	        "  --cache DIR      cache directory for initialize() (as the app does)\n"
 	        "  --native-probe   also query native (Gen2) mode state; BLOCKS on Carina\n"
 	        "  --reset          reset the VIO origin before sampling\n"
 	        "  --3dof           select 3DoF instead of 6DoF\n"
@@ -184,6 +193,41 @@ camera_frame_cb(char *left0, char *right0, char *left1, char *right1, double tim
 	__atomic_store_n(&g_cam_h, height, __ATOMIC_RELAXED);
 }
 
+/* ---- vsync / imu callbacks: the Android app registers all four, and the SDK may only
+ * start a pipeline whose callback is non-null, so register them and count invocations. ---- */
+static unsigned long long g_vsync_count;
+static unsigned long long g_imu_count;
+
+static void
+vsync_cb(double timestamp)
+{
+	(void)timestamp;
+	__atomic_add_fetch(&g_vsync_count, 1, __ATOMIC_RELAXED);
+}
+
+static void
+imu_cb(float *imu, double timestamp)
+{
+	(void)imu;
+	(void)timestamp;
+	__atomic_add_fetch(&g_imu_count, 1, __ATOMIC_RELAXED);
+}
+
+/* ---- optional pose callback: does the device push poses at all? ---- */
+static float g_cb_pose[7];
+static double g_cb_ts;
+static unsigned long long g_cb_count;
+
+static void
+pose_cb(float *pose, double timestamp)
+{
+	for (int i = 0; i < 7; i++) {
+		g_cb_pose[i] = pose[i];
+	}
+	g_cb_ts = timestamp;
+	__atomic_add_fetch(&g_cb_count, 1, __ATOMIC_RELAXED);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -216,6 +260,15 @@ main(int argc, char **argv)
 			o.have_set_mode = true;
 		} else if (strcmp(a, "--native-probe") == 0) {
 			o.native_probe = true;
+		} else if (strcmp(a, "--src-cb") == 0) {
+			o.src_cb = true;
+			o.pose_cb = true;
+		} else if (strcmp(a, "--auto-exposure") == 0) {
+			o.auto_exposure = true;
+		} else if (strcmp(a, "--cache") == 0 && i + 1 < argc) {
+			o.cache = argv[++i];
+		} else if (strcmp(a, "--pose-cb") == 0) {
+			o.pose_cb = true;
 		} else if (strcmp(a, "--self-test-axes") == 0) {
 			return self_test_axes();
 		} else if (strcmp(a, "--get-mode") == 0) {
@@ -281,8 +334,11 @@ main(int argc, char **argv)
 	int ret = xr_device_provider_set_dof_type_carina(h, o.sixdof ? 1 : 0);
 	printf("set_dof_type_carina(%d) -> %d\n", o.sixdof ? 1 : 0, ret);
 
-	ret = xr_device_provider_initialize(h, NULL, NULL);
-	printf("initialize -> %d\n", ret);
+	/* The Android app passes a cache directory here (it also caches VIO data) and calls
+	 * set_auto_exposure_carina after start; those are the only structural differences
+	 * from the host tool that produced identity poses in 6DoF. */
+	ret = xr_device_provider_initialize(h, NULL, o.cache);
+	printf("initialize(cache=%s) -> %d\n", o.cache ? o.cache : "(null)", ret);
 	if (ret != VITURE_GLASSES_SUCCESS) {
 		xr_device_provider_destroy(h);
 		return 1;
@@ -296,10 +352,16 @@ main(int argc, char **argv)
 	 * every component exactly zero, over 90 s, while the glasses were being moved.
 	 * This is the sequence the vendor's own demo uses (glasses-demo carina_start()).
 	 */
-	ret = xr_device_provider_register_callbacks_carina(h, NULL, NULL, NULL, camera_frame_cb);
-	printf("register_callbacks_carina(camera) -> %d\n", ret);
+	ret = xr_device_provider_register_callbacks_carina(h, pose_cb, vsync_cb, imu_cb, camera_frame_cb);
+	printf("register_callbacks_carina(pose, vsync, imu, camera) -> %d\n", ret);
 	if (ret != VITURE_GLASSES_SUCCESS) {
 		fprintf(stderr, "warning: no camera callback registered; the VIO will have no input\n");
+	}
+
+	/* Diagnostic: dump the first few callback payloads next to a polled pose, so the
+	 * payload layout can be identified rather than guessed. */
+	if (o.pose_cb) {
+		fprintf(stderr, "waiting for pose callback payloads...\n");
 	}
 
 	ret = xr_device_provider_start(h);
@@ -307,6 +369,10 @@ main(int argc, char **argv)
 	if (ret != VITURE_GLASSES_SUCCESS) {
 		xr_device_provider_destroy(h);
 		return 1;
+	}
+	if (o.auto_exposure) {
+		const int ae = xr_device_provider_set_auto_exposure_carina(h);
+		printf("set_auto_exposure_carina -> %d\n", ae);
 	}
 
 	printf("device_type=%d (2 == XR_DEVICE_TYPE_VITURE_CARINA)\n", xr_device_provider_get_device_type(h));
@@ -374,7 +440,32 @@ main(int argc, char **argv)
 		float pose[VITURE_POSE_COUNT] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f};
 		int status = -1;
 		const double t = now_s();
-		const int r = xr_device_provider_get_gl_pose_carina(h, pose, o.predict_s, &status);
+		int r;
+		if (o.src_cb) {
+			/* Callback payload is [qw,qx,qy,qz, px,py,pz]; this tool's internal layout is
+			 * [px,py,pz, qw,qx,qy,qz] (the GL pose order), so reorder. No status field is
+			 * provided by the callback, and it is gravity-referenced and stable, so treat a
+			 * flowing callback as stable. */
+			const float *raw = g_cb_pose;
+			pose[0] = raw[4];
+			pose[1] = raw[5];
+			pose[2] = raw[6];
+			pose[3] = raw[0];
+			pose[4] = raw[1];
+			pose[5] = raw[2];
+			pose[6] = raw[3];
+			status = 0;
+			r = __atomic_load_n(&g_cb_count, __ATOMIC_RELAXED) > 0 ? VITURE_GLASSES_SUCCESS : -1;
+		} else {
+			r = xr_device_provider_get_gl_pose_carina(h, pose, o.predict_s, &status);
+		}
+		if (o.pose_cb && (n % 4) == 0) {
+			printf("  #%llu polled p/an=(%.4f %.4f %.4f) q=(%.4f %.4f %.4f %.4f)\n", n, pose[0], pose[1],
+			       pose[2], pose[3], pose[4], pose[5], pose[6]);
+			printf("  #%llu cbp    raw=(%.4f %.4f %.4f %.4f %.4f %.4f %.4f)  cb_invocations=%llu\n", n,
+			       g_cb_pose[0], g_cb_pose[1], g_cb_pose[2], g_cb_pose[3], g_cb_pose[4], g_cb_pose[5],
+			       g_cb_pose[6], (unsigned long long)__atomic_load_n(&g_cb_count, __ATOMIC_RELAXED));
+		}
 
 		if (r != VITURE_GLASSES_SUCCESS) {
 			failures++;
@@ -473,6 +564,18 @@ main(int argc, char **argv)
 		const unsigned long long frames = __atomic_load_n(&g_cam_frames, __ATOMIC_RELAXED);
 		const int cw = __atomic_load_n(&g_cam_w, __ATOMIC_RELAXED);
 		const int ch = __atomic_load_n(&g_cam_h, __ATOMIC_RELAXED);
+		{
+			const unsigned long long pcb = __atomic_load_n(&g_cb_count, __ATOMIC_RELAXED);
+			printf("pose callback invocations: %llu", pcb);
+			if (pcb > 0) {
+				printf(" (last: p=(%.3f %.3f %.3f) q=(%.3f %.3f %.3f %.3f))", g_cb_pose[0],
+				       g_cb_pose[1], g_cb_pose[2], g_cb_pose[3], g_cb_pose[4], g_cb_pose[5], g_cb_pose[6]);
+			}
+			printf("\n");
+		}
+		printf("vsync callbacks: %llu   imu callbacks: %llu\n",
+		       (unsigned long long)__atomic_load_n(&g_vsync_count, __ATOMIC_RELAXED),
+		       (unsigned long long)__atomic_load_n(&g_imu_count, __ATOMIC_RELAXED));
 		printf("stereo camera frames delivered: %llu", frames);
 		if (frames > 0) {
 			printf(" (%dx%d, %.1f fps)\n", cw, ch, (double)frames / (elapsed > 0.0 ? elapsed : 1.0));
