@@ -80,6 +80,7 @@ usage(const char *argv0)
 	        "  --set-mode M     set display mode first, by name or vendor id\n"
 	        "                   e.g. 3840x1200@90-sbs or 0x45\n"
 	        "  --get-mode       print the device's display-mode state and exit\n"
+	        "  --self-test-axes verify the Y-up yaw/pitch/roll extraction and exit\n"
 	        "  --native-probe   also query native (Gen2) mode state; BLOCKS on Carina\n"
 	        "  --reset          reset the VIO origin before sampling\n"
 	        "  --3dof           select 3DoF instead of 6DoF\n"
@@ -90,26 +91,79 @@ usage(const char *argv0)
 	        argv0);
 }
 
-/*! Polar decomposition of a quaternion into degrees of yaw/pitch/roll (ZYX). */
+/*!
+ * Polar decomposition of a quaternion into degrees of yaw/pitch/roll.
+ *
+ * Convention: the SDK hands back OpenGL-convention poses (x right, y UP, z backward),
+ * so the rotation decomposes as R = Ry(yaw) * Rx(pitch) * Rz(roll). The obvious
+ * aerospace ZYX formula is WRONG here and was a real bug: it permuted the axes, which
+ * felt as 'tilting my head down does roll' through the glasses. Derivation from that
+ * product:
+ *     R02 = sy*cp    R22 = cy*cp    R12 = -sp
+ *     R10 = cp*sr    R11 = cp*cr
+ * giving the three inverse trig calls below (cp != 0).
+ *
+ * --self-test-axes rebuilds quaternions from known angles and checks recovery.
+ */
 static void
 quat_to_euler_deg(const float q[7], double *yaw, double *pitch, double *roll)
 {
 	const double w = q[3], x = q[4], y = q[5], z = q[6];
-	const double sinr_cosp = 2.0 * (w * x + y * z);
-	const double cosr_cosp = 1.0 - 2.0 * (x * x + y * y);
-	*roll = atan2(sinr_cosp, cosr_cosp) * 180.0 / M_PI;
+	const double r02 = 2.0 * (x * z + w * y);
+	const double r22 = 1.0 - 2.0 * (x * x + y * y);
+	const double r12 = 2.0 * (y * z - w * x);
+	const double r10 = 2.0 * (x * y + w * z);
+	const double r11 = 1.0 - 2.0 * (x * x + z * z);
 
-	double sinp = 2.0 * (w * y - z * x);
-	if (sinp > 1.0) {
-		sinp = 1.0;
-	} else if (sinp < -1.0) {
-		sinp = -1.0;
+	double sp = -r12;
+	if (sp > 1.0) {
+		sp = 1.0;
+	} else if (sp < -1.0) {
+		sp = -1.0;
 	}
-	*pitch = asin(sinp) * 180.0 / M_PI;
+	*pitch = asin(sp) * 180.0 / M_PI;
+	*yaw = atan2(r02, r22) * 180.0 / M_PI;
+	*roll = atan2(r10, r11) * 180.0 / M_PI;
+}
 
-	const double siny_cosp = 2.0 * (w * z + x * y);
-	const double cosy_cosp = 1.0 - 2.0 * (y * y + z * z);
-	*yaw = atan2(siny_cosp, cosy_cosp) * 180.0 / M_PI;
+/*! Build the quaternion for R = Ry(yaw) * Rx(pitch) * Rz(roll), for the self-test. */
+static void
+euler_deg_to_quat(double yaw, double pitch, double roll, float q[7])
+{
+	const double hy = yaw * M_PI / 360.0, hp = pitch * M_PI / 360.0, hr = roll * M_PI / 360.0;
+	const double cy = cos(hy), sy = sin(hy), cp = cos(hp), sp = sin(hp), cr = cos(hr), sr = sin(hr);
+	q[0] = q[1] = q[2] = 0.0f;
+	q[3] = (float)(cy * cp * cr + sy * sp * sr);
+	q[4] = (float)(cy * sp * cr + sy * cp * sr);
+	q[5] = (float)(sy * cp * cr - cy * sp * sr);
+	q[6] = (float)(cy * cp * sr - sy * sp * cr);
+}
+
+static int
+self_test_axes(void)
+{
+	const double cases[][3] = {
+	    {0, 0, 0}, {30, 0, 0}, {-30, 0, 0}, {0, 20, 0}, {0, -20, 0}, {0, 0, 25}, {0, 0, -25},
+	    {35, 15, -10}, {-70, 25, 40}, {179, 5, 5}, {-5, -40, 60},
+	};
+	int bad = 0;
+	printf("axis self-test (Y-up: R = Ry(yaw) * Rx(pitch) * Rz(roll))\n");
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		float q[7];
+		double y, p, r;
+		euler_deg_to_quat(cases[i][0], cases[i][1], cases[i][2], q);
+		quat_to_euler_deg(q, &y, &p, &r);
+		const double dy = fabs(y - cases[i][0]), dp = fabs(p - cases[i][1]), dr = fabs(r - cases[i][2]);
+		/* float32 quaternion input, so allow well below anything perceptible */
+		const int ok = dy < 1e-3 && dp < 1e-3 && dr < 1e-3;
+		if (!ok) {
+			bad++;
+		}
+		printf("  in (yaw %+7.1f pitch %+7.1f roll %+7.1f) -> out (%+7.1f %+7.1f %+7.1f)  %s\n",
+		       cases[i][0], cases[i][1], cases[i][2], y, p, r, ok ? "ok" : "MISMATCH");
+	}
+	printf("%zu cases, %d failures\n", sizeof(cases) / sizeof(cases[0]), bad);
+	return bad == 0 ? 0 : 1;
 }
 
 /* ---- stereo camera frames: the Carina VIO's input ---- */
@@ -162,6 +216,8 @@ main(int argc, char **argv)
 			o.have_set_mode = true;
 		} else if (strcmp(a, "--native-probe") == 0) {
 			o.native_probe = true;
+		} else if (strcmp(a, "--self-test-axes") == 0) {
+			return self_test_axes();
 		} else if (strcmp(a, "--get-mode") == 0) {
 			o.get_mode = true;
 		} else if (strcmp(a, "--reset") == 0) {

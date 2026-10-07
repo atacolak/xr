@@ -69,18 +69,27 @@ def main() -> int:
 
     env = dict(os.environ)
     env["LD_LIBRARY_PATH"] = f"{SDK}/x86_64{os.pathsep}{env.get('LD_LIBRARY_PATH', '')}"
+    encoder = None
     pose = subprocess.Popen([str(tool), "--3dof", "--seconds", str(a.seconds), "--json"],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
     assert pose.stdout is not None
 
     player = None
     if not a.no_mpv:
-        # ffplay, not mpv: mpv's rawvideo demuxer wants a fourcc from its own table and
-        # rejects rgb24 outright ("invalid FourCC"), while ffplay takes -pixel_format.
-        cmd = ["ffplay", "-fs", "-autoexit", "-loglevel", "error",
-               "-f", "rawvideo", "-pixel_format", "rgb24",
-               "-video_size", f"{frame_w}x{frame_h}", "-framerate", str(a.fps), "-"]
-        player = subprocess.Popen(cmd, stdin=subprocess.PIPE, env={**env, "DISPLAY": env.get("DISPLAY", ":1")})
+        # raw rgb -> ffmpeg (ultrafast, zero-latency) -> mpv. mpv's own rawvideo demuxer
+        # wants a fourcc from its table and rejects rgb24, and ffplay could consume the
+        # stream at 60 fps yet only put 1-2 frames/second on the screen (measured), so
+        # ffmpeg encodes and mpv -- the player that already displayed 3840x1200 files
+        # smoothly here -- does the presenting.
+        enc = ["ffmpeg", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
+               "-s", f"{frame_w}x{frame_h}", "-r", str(a.fps), "-i", "-",
+               "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+               "-pix_fmt", "yuv420p", "-f", "mpegts", "-"]
+        dec = ["mpv", "--no-audio", "--fullscreen", "--no-osc", "--really-quiet", "--cache=no", "-"]
+        encoder = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
+        assert encoder.stdout is not None
+        player = subprocess.Popen(dec, stdin=encoder.stdout,
+                                  env={**env, "DISPLAY": env.get("DISPLAY", ":1")})
         assert player.stdin is not None
 
     print(f"pose source: {tool.name} --3dof   render {frame_w}x{frame_h} SBS   target {a.fps} fps")
@@ -103,7 +112,11 @@ def main() -> int:
             roll = d.get("roll", 0.0) * (-1.0 if a.invert_roll else 1.0)
             last_pose = (yaw, pitch, roll)
             cam = demo.Camera(pos=(0.0, 0.0, 0.0), yaw=yaw, pitch=pitch, roll=roll)
-            frame = demo.render_frame(0.35, cam).tobytes()
+            # slow self-drift so the scene moves even without head motion: makes a
+            # frozen or stuttering display visible rather than indistinguishable
+            # from a still scene, and exercises motion-in-depth continuously.
+            phase = (time.monotonic() * 0.2) % 1.0
+            frame = demo.render_frame(phase, cam).tobytes()
             if player is not None:
                 player.stdin.write(frame)
             elif n < 3:
@@ -118,6 +131,12 @@ def main() -> int:
         pass
     finally:
         pose.terminate()
+        if encoder is not None:
+            try:
+                encoder.stdin.close()
+            except Exception:
+                pass
+            encoder.terminate()
         if player is not None:
             try:
                 player.stdin.close()
