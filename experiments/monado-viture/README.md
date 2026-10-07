@@ -134,6 +134,23 @@ position stays at the origin, but it *takes* a position, so a 6DoF pose drops in
 - `--res` (640x400 per eye): 119 fps of render headroom at 3x upscale. Raise it for sharpness
   and expect the frame rate to fall.
 
+### verifying without the glasses
+
+The glasses spend most of their life unplugged, and with no output attached the X server
+has no 3840x1200 framebuffer at all — a window capture then returns an 8x8 image, which
+looks like a broken renderer rather than a missing display. So:
+
+```sh
+Xvfb :9 -screen 0 3840x1200x24 +extension GLX &        # a real 3840x1200 framebuffer
+DISPLAY=:9 tools/headtrack-demo.py --seconds 30 --src synth   # no device needed
+# the presenter prints its window id; capture exactly that window:
+DISPLAY=:9 xwd -id <wid> -silent > /tmp/cap.xwd
+```
+
+Then check both halves have lit pixels and that the bands match the scene (dim walls, a
+brighter floor). This is how the pipeline is verified between hardware sessions; it caught a
+presenter that rendered nothing at all while cheerfully reporting fps.
+
 ## Hazard: on this workstation, restarting X kills the agent sessions
 
 Every omp / herdr session on sfub descends from the X session
