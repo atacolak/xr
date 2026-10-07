@@ -73,8 +73,13 @@ main(int argc, char **argv)
 	memset(&at, 0, sizeof at);
 	at.override_redirect = True;  // no window manager may resize, decorate or restack us
 	at.background_pixel = BlackPixel(dpy, scr);
+	// Retain the contents server-side. Without a connected output the server has nothing to
+	// read back, so a window capture (xwd -id) comes back empty and there is no way to verify
+	// the presented image when the glasses are unplugged -- which is most of the time.
+	at.backing_store = Always;
+	at.backing_planes = AllPlanes;
 	Window win = XCreateWindow(dpy, RootWindow(dpy, scr), 0, 0, (unsigned)w, (unsigned)h, 0, depth, InputOutput, vis,
-	                           CWOverrideRedirect | CWBackPixel, &at);
+	                           CWOverrideRedirect | CWBackPixel | CWBackingStore | CWBackingPlanes, &at);
 	XMapRaised(dpy, win);
 	if (hide_cursor) {
 		// An HMD has nowhere sensible to draw a pointer.
@@ -107,7 +112,10 @@ main(int argc, char **argv)
 	shmctl(shm.shmid, IPC_RMID, NULL);  // freed when the last detach happens
 
 	GC gc = XCreateGC(dpy, win, 0, NULL);
-	fprintf(stderr, "xpresent: %dx%d, XImage stride %d bytes, %d bpp\n", w, h, img->bytes_per_line, img->bits_per_pixel);
+	// Announce the window id: with no output attached, grabbing the wrong window (e.g. a
+	// window-manager container of the same size) silently yields an 8x8 capture.
+	fprintf(stderr, "xpresent: window 0x%lx  %dx%d, XImage stride %d bytes, %d bpp\n", (unsigned long)win, w, h,
+	        img->bytes_per_line, img->bits_per_pixel);
 
 	const size_t row_bytes = (size_t)w * 4;  // bgra
 	char *staging = malloc(row_bytes);
