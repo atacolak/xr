@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import math
 import os
 import pathlib
 import signal
@@ -56,10 +57,20 @@ def main() -> int:
     ap.add_argument("--fps", type=int, default=60,
                     help="the panel is 90 Hz, but this CPU pipeline (render -> ffmpeg scale -> XShm "
                          "blit) tops out near 60; 90 needs a GPU presenter")
-    ap.add_argument("--res", default="800x500", help="per-eye render size (scaled up for the panels)")
+    ap.add_argument("--res", default="640x400", help="per-eye render size (scaled up for the panels)")
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)
     ap.add_argument("--no-presenter", action="store_true", help="render and measure only")
+    ap.add_argument("--presenter", choices=("auto", "gl", "shm"), default="auto",
+                    help="gl = GPU presenter (tools/xpresent-gl: small frames over the pipe, GPU "
+                         "scales, the only way to 90 fps here). shm = CPU presenter "
+                         "(tools/xpresent: full-size frames, ~60 fps ceiling). auto picks gl when built.")
+    ap.add_argument("--smooth", type=float, default=0.015,
+                    help="exponential smoothing time constant in seconds (0 disables). Light by "
+                         "design: smoothing is lag, and lag is what makes an HMD view feel wrong.")
+    ap.add_argument("--deadband", type=float, default=0.03,
+                    help="ignore pose changes smaller than this many degrees (kills micro-jitter "
+                         "with no lag at all, unlike smoothing)")
     ap.add_argument("--no-flip-xy", action="store_true",
                     help="do not apply the pose-frame handedness fix (the SDK GL pose has z "
                          "backward while this renderer looks down +z; without the fix, yaw and "
@@ -72,7 +83,7 @@ def main() -> int:
                          "diagonal, which is ~44.9 deg horizontal on an 8:5 panel. This "
                          "must match the optics or head motion feels too fast/slow, "
                          "because the panel stretches the render across the real FOV.")
-    ap.add_argument("--src", choices=("poll", "cb"), default="poll",
+    ap.add_argument("--src", choices=("poll", "cb", "synth"), default="poll",
                     help="pose source. 'poll' = get_gl_pose_carina: correct OpenGL frame and "
                          "gravity-anchored pitch/roll (the SDK documents this), ~30 pose updates/s. "
                          "'cb' = the device callback: much higher rate, but its quaternion is in the "
@@ -116,14 +127,20 @@ def main() -> int:
 
     encoder = player = None
     if not a.no_presenter:
+        xpresent_gl = ROOT / "tools" / "xpresent-gl"
+        use_gl = a.presenter == "gl" or (a.presenter == "auto" and xpresent_gl.exists())
+        vf = [] if use_gl else ["-vf", f"scale={screen_w}:{screen_h}:flags=fast_bilinear"]
         encoder = subprocess.Popen(
             ["ffmpeg", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24",
-             "-s", f"{frame_w}x{frame_h}", "-r", str(a.fps), "-i", "-",
-             "-vf", f"scale={screen_w}:{screen_h}:flags=fast_bilinear",
+             "-s", f"{frame_w}x{frame_h}", "-r", str(a.fps), "-i", "-", *vf,
              "-pix_fmt", "bgra", "-f", "rawvideo", "-"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env)
         assert encoder.stdin is not None and encoder.stdout is not None
-        if xpresent.exists():
+        if use_gl:
+            player = subprocess.Popen([str(xpresent_gl), str(frame_w), str(frame_h),
+                                       str(screen_w), str(screen_h)],
+                                      stdin=encoder.stdout, env=env)
+        elif xpresent.exists():
             player = subprocess.Popen([str(xpresent), str(screen_w), str(screen_h)],
                                       stdin=encoder.stdout, env=env)
         else:  # fallback player; slower, and it will say so
@@ -167,7 +184,7 @@ def main() -> int:
     # "for line in stdout" consumes every sample in order: the pipe accumulates a backlog
     # and the view falls steadily behind the head. That reads as drift, choppiness and
     # nausea, and no amount of FOV or axis fixing helps. Keep only the newest sample.
-    latest = {"pose": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1}
+    latest = {"pose": (0.0, 0.0, 0.0), "pos": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1}
     lock = threading.Lock()
     stream_t0 = [None]
 
@@ -183,12 +200,38 @@ def main() -> int:
                 stream_t0[0] = time.monotonic() - d.get("t", 0.0)
             with lock:
                 latest["pose"] = (d.get("yaw", 0.0), d.get("pitch", 0.0), d.get("roll", 0.0))
+                latest["pos"] = (d.get("px", 0.0), d.get("py", 0.0), d.get("pz", 0.0))
                 latest["t"] = d.get("t", 0.0)
                 latest["status"] = d.get("status", 1)
                 latest["n"] += 1
 
-    threading.Thread(target=reader, daemon=True).start()
+    def synthetic():
+        """A known pose signal: sweeps yaw, pitch and roll at different rates, plus a small
+        translation, so the whole render/present chain can be exercised and measured with
+        no device attached (the glasses get unplugged between sessions)."""
+        t0 = time.monotonic()
+        while True:
+            el = time.monotonic() - t0
+            with lock:
+                latest["pose"] = (35.0 * math.sin(2 * math.pi * 0.12 * el),
+                                  12.0 * math.sin(2 * math.pi * 0.07 * el + 1.0),
+                                  10.0 * math.sin(2 * math.pi * 0.05 * el + 2.0))
+                latest["pos"] = (0.06 * math.sin(2 * math.pi * 0.09 * el),
+                                 0.0,
+                                 0.10 * math.sin(2 * math.pi * 0.11 * el + 0.7))
+                latest["t"] = el
+                latest["status"] = 0
+                latest["n"] += 1
+            time.sleep(1.0 / 120.0)
 
+    if a.src == "synth":
+        stream_t0[0] = time.monotonic()
+        threading.Thread(target=synthetic, daemon=True).start()
+    else:
+        threading.Thread(target=reader, daemon=True).start()
+
+    smoothed = [0.0, 0.0, 0.0, None]
+    prev_t = [time.monotonic()]
     interval = 1.0 / float(a.fps)
     next_deadline = time.monotonic()
     n = 0
@@ -198,6 +241,7 @@ def main() -> int:
         while True:
             with lock:
                 yaw0, pitch0, roll0 = latest["pose"]
+                px0, py0, pz0 = latest["pos"]
                 pose_t, pose_status = latest["t"], latest["status"]
             d = {"status": pose_status}
             yaw = yaw0 * (-1.0 if a.invert_yaw else 1.0)
@@ -227,7 +271,26 @@ def main() -> int:
                     roll = ang_diff(roll, ref[2])
             last = (yaw, pitch, roll)
 
-            cam = demo.Camera(pos=(0.0, 0.0, 0.0), yaw=yaw, pitch=pitch, roll=roll)
+            # Smoothing is lag and a deadband is not, so apply the deadband first: it alone
+            # removes the sensor's micro-jitter. 3DoF reports no translation, so the position
+            # stays at the origin -- but it is plumbed through, so a 6DoF pose drops straight in.
+            now_s = time.monotonic()
+            dt = max(1e-3, min(0.25, now_s - prev_t[0]))
+            prev_t[0] = now_s
+            sm = smoothed
+            if sm[3] is None:
+                sm[0], sm[1], sm[2] = yaw, pitch, roll
+                sm[3] = 1.0
+            else:
+                alpha = 1.0 if a.smooth <= 0.0 else (1.0 - math.exp(-dt / a.smooth))
+                for i, target in enumerate((yaw, pitch, roll)):
+                    d_ang = target - sm[i]
+                    if abs(d_ang) < a.deadband:
+                        d_ang = 0.0
+                    sm[i] += alpha * d_ang
+                yaw, pitch, roll = sm[0], sm[1], sm[2]
+
+            cam = demo.Camera(pos=(px0, py0, pz0), yaw=yaw, pitch=pitch, roll=roll)
             # slow self-drift, so a stuttering display is distinguishable from a still scene
             phase = (time.monotonic() * 0.2) % 1.0
             frame = demo.render_frame(phase, cam).tobytes()
