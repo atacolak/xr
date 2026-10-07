@@ -55,6 +55,7 @@ struct options
 	bool pose_cb;
 	bool auto_exposure;
 	bool src_cb;
+	bool flip_xy;
 	const char *cache;
 };
 
@@ -87,6 +88,11 @@ usage(const char *argv0)
 	        "  --self-test-axes verify the Y-up yaw/pitch/roll extraction and exit\n"
 	        "  --pose-cb        register the pose callback too (tests the push path)\n"
 	        "  --auto-exposure  call set_auto_exposure_carina after start (as the app does)\n"
+	        "  --flip-xy        flip the pose frame handedness: negate quaternion x,y, which\n"
+	        "                   inverts yaw and pitch but preserves roll. Needed because the\n"
+	        "                   SDK's GL pose has z backward (right-handed) while the demo\n"
+	        "                   renderer looks down +z; without it a head turn drives the\n"
+	        "                   scene the wrong way.\n"
 	        "  --src-cb         take poses from the device callback instead of polling\n"
 	        "                   (the callback is ~800 Hz and gravity-stable; polling drifts)\n"
 	        "  --cache DIR      cache directory for initialize() (as the app does)\n"
@@ -260,6 +266,8 @@ main(int argc, char **argv)
 			o.have_set_mode = true;
 		} else if (strcmp(a, "--native-probe") == 0) {
 			o.native_probe = true;
+		} else if (strcmp(a, "--flip-xy") == 0) {
+			o.flip_xy = true;
 		} else if (strcmp(a, "--src-cb") == 0) {
 			o.src_cb = true;
 			o.pose_cb = true;
@@ -459,6 +467,16 @@ main(int argc, char **argv)
 		} else {
 			r = xr_device_provider_get_gl_pose_carina(h, pose, o.predict_s, &status);
 		}
+		if (o.flip_xy) {
+			/* Handedness fix: negate the quaternion's x and y. That conjugates the
+			 * rotation by 180 deg about z, which inverts yaw and pitch and preserves
+			 * roll -- exactly the correction the operator reported was needed, because
+			 * the SDK's GL pose has z pointing backward (right-handed) while the demo
+			 * renderer looks down +z. */
+			pose[4] = -pose[4];
+			pose[5] = -pose[5];
+		}
+
 		if (o.pose_cb && (n % 4) == 0) {
 			printf("  #%llu polled p/an=(%.4f %.4f %.4f) q=(%.4f %.4f %.4f %.4f)\n", n, pose[0], pose[1],
 			       pose[2], pose[3], pose[4], pose[5], pose[6]);

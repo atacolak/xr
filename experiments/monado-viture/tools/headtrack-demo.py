@@ -58,6 +58,10 @@ def main() -> int:
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)
     ap.add_argument("--no-presenter", action="store_true", help="render and measure only")
+    ap.add_argument("--no-flip-xy", action="store_true",
+                    help="do not apply the pose-frame handedness fix (the SDK GL pose has z "
+                         "backward while this renderer looks down +z; without the fix, yaw and "
+                         "pitch drive the scene backwards)")
     ap.add_argument("--invert-yaw", action="store_true")
     ap.add_argument("--invert-pitch", action="store_true")
     ap.add_argument("--invert-roll", action="store_true")
@@ -98,6 +102,8 @@ def main() -> int:
     env["DISPLAY"] = env.get("DISPLAY", ":1")
 
     pose_args = [str(tool), "--3dof", "--seconds", str(a.seconds), "--json", "--auto-exposure"]
+    if not a.no_flip_xy:
+        pose_args.append("--flip-xy")
     if a.src == "cb":
         pose_args.append("--src-cb")
     else:
