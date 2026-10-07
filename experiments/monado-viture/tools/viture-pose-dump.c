@@ -112,6 +112,24 @@ quat_to_euler_deg(const float q[7], double *yaw, double *pitch, double *roll)
 	*yaw = atan2(siny_cosp, cosy_cosp) * 180.0 / M_PI;
 }
 
+/* ---- stereo camera frames: the Carina VIO's input ---- */
+static unsigned long long g_cam_frames;
+static int g_cam_w;
+static int g_cam_h;
+
+static void
+camera_frame_cb(char *left0, char *right0, char *left1, char *right1, double timestamp, int width, int height)
+{
+	(void)left0;
+	(void)right0;
+	(void)left1;
+	(void)right1;
+	(void)timestamp;
+	__atomic_add_fetch(&g_cam_frames, 1, __ATOMIC_RELAXED);
+	__atomic_store_n(&g_cam_w, width, __ATOMIC_RELAXED);
+	__atomic_store_n(&g_cam_h, height, __ATOMIC_RELAXED);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -212,6 +230,20 @@ main(int argc, char **argv)
 	if (ret != VITURE_GLASSES_SUCCESS) {
 		xr_device_provider_destroy(h);
 		return 1;
+	}
+
+	/*
+	 * The stereo camera callback MUST be registered before start(): the Carina VIO
+	 * engine captures the callback pointer at start time. Without it the VIO has no
+	 * images to solve from, and get_gl_pose_carina then returns an identity pose
+	 * flagged 'unstable' forever -- measured as 10798/10798 unstable samples with
+	 * every component exactly zero, over 90 s, while the glasses were being moved.
+	 * This is the sequence the vendor's own demo uses (glasses-demo carina_start()).
+	 */
+	ret = xr_device_provider_register_callbacks_carina(h, NULL, NULL, NULL, camera_frame_cb);
+	printf("register_callbacks_carina(camera) -> %d\n", ret);
+	if (ret != VITURE_GLASSES_SUCCESS) {
+		fprintf(stderr, "warning: no camera callback registered; the VIO will have no input\n");
 	}
 
 	ret = xr_device_provider_start(h);
@@ -381,6 +413,19 @@ main(int argc, char **argv)
 	printf("position spread (device units): x=%.5f y=%.5f z=%.5f\n", px_max - px_min, py_max - py_min,
 	       pz_max - pz_min);
 	printf("max orientation step between samples=%.3f deg\n", max_ang_step);
+	{
+		const unsigned long long frames = __atomic_load_n(&g_cam_frames, __ATOMIC_RELAXED);
+		const int cw = __atomic_load_n(&g_cam_w, __ATOMIC_RELAXED);
+		const int ch = __atomic_load_n(&g_cam_h, __ATOMIC_RELAXED);
+		printf("stereo camera frames delivered: %llu", frames);
+		if (frames > 0) {
+			printf(" (%dx%d, %.1f fps)\n", cw, ch, (double)frames / (elapsed > 0.0 ? elapsed : 1.0));
+		} else {
+			printf("\n  NO camera frames: the VIO has no input at all, so every pose will\n"
+			       "  be identity+unstable no matter how the glasses move. The stereo camera\n"
+			       "  callback must be registered before start().\n");
+		}
+	}
 	if (n > 0) {
 		printf("pose status: stable=%llu unstable=%llu (%.1f%% stable)\n", stable, unstable,
 		       100.0 * (double)stable / (double)n);
