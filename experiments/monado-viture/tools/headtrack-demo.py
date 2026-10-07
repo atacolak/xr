@@ -36,6 +36,7 @@ import pathlib
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -65,10 +66,12 @@ def main() -> int:
                          "diagonal, which is ~44.9 deg horizontal on an 8:5 panel. This "
                          "must match the optics or head motion feels too fast/slow, "
                          "because the panel stretches the render across the real FOV.")
-    ap.add_argument("--src", choices=("cb", "poll"), default="cb",
-                    help="pose source: 'cb' uses the device callback (~800 Hz, gravity-stable, "
-                         "100%% stable in testing); 'poll' uses get_gl_pose_carina, which drifts "
-                         "(measured 30 deg of pitch drift while stationary).")
+    ap.add_argument("--src", choices=("poll", "cb"), default="poll",
+                    help="pose source. 'poll' = get_gl_pose_carina: correct OpenGL frame and "
+                         "gravity-anchored pitch/roll (the SDK documents this), ~30 pose updates/s. "
+                         "'cb' = the device callback: much higher rate, but its quaternion is in the "
+                         "IMU's North-West-Up frame and does NOT agree with the gravity-anchored "
+                         "attitude, so the axes come out wrong.")
     ap.add_argument("--predict", type=float, default=0.0,
                     help="seconds of pose prediction, to compensate pipeline latency "
                          "(the SDK predicts internally). 0 disables.")
@@ -152,12 +155,15 @@ def main() -> int:
             d += 360.0
         return d
 
-    interval = 1.0 / float(a.fps)
-    next_deadline = time.monotonic()
-    n = 0
-    t_report = time.monotonic()
-    last = (0.0, 0.0, 0.0)
-    try:
+    # Latest-value pose reader. The pose stream is faster than the render loop, so a plain
+    # "for line in stdout" consumes every sample in order: the pipe accumulates a backlog
+    # and the view falls steadily behind the head. That reads as drift, choppiness and
+    # nausea, and no amount of FOV or axis fixing helps. Keep only the newest sample.
+    latest = {"pose": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1}
+    lock = threading.Lock()
+    stream_t0 = [None]
+
+    def reader():
         for line in pose.stdout:
             if not line.startswith("{"):
                 continue
@@ -165,9 +171,30 @@ def main() -> int:
                 d = json.loads(line)
             except Exception:
                 continue
-            yaw = d.get("yaw", 0.0) * (-1.0 if a.invert_yaw else 1.0)
-            pitch = d.get("pitch", 0.0) * (-1.0 if a.invert_pitch else 1.0)
-            roll = d.get("roll", 0.0) * (-1.0 if a.invert_roll else 1.0)
+            if stream_t0[0] is None:
+                stream_t0[0] = time.monotonic() - d.get("t", 0.0)
+            with lock:
+                latest["pose"] = (d.get("yaw", 0.0), d.get("pitch", 0.0), d.get("roll", 0.0))
+                latest["t"] = d.get("t", 0.0)
+                latest["status"] = d.get("status", 1)
+                latest["n"] += 1
+
+    threading.Thread(target=reader, daemon=True).start()
+
+    interval = 1.0 / float(a.fps)
+    next_deadline = time.monotonic()
+    n = 0
+    t_report = time.monotonic()
+    last = (0.0, 0.0, 0.0)
+    try:
+        while True:
+            with lock:
+                yaw0, pitch0, roll0 = latest["pose"]
+                pose_t, pose_status = latest["t"], latest["status"]
+            d = {"status": pose_status}
+            yaw = yaw0 * (-1.0 if a.invert_yaw else 1.0)
+            pitch = pitch0 * (-1.0 if a.invert_pitch else 1.0)
+            roll = roll0 * (-1.0 if a.invert_roll else 1.0)
             if not a.no_recenter:
                 if recenter_request[0]:
                     recenter_request[0] = False
@@ -211,8 +238,9 @@ def main() -> int:
 
             now = time.monotonic()
             if now - t_report > 2.0:
-                print(f"  {n / (now - t_report):5.1f} fps   yaw {last[0]:+7.1f}  pitch {last[1]:+7.1f}  "
-                      f"roll {last[2]:+7.1f}", flush=True)
+                age_ms = 1000.0 * (time.monotonic() - (stream_t0[0] + pose_t)) if stream_t0[0] else float("nan")
+                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   yaw {last[0]:+7.1f}  "
+                      f"pitch {last[1]:+7.1f}  roll {last[2]:+7.1f}", flush=True)
                 n, t_report = 0, now
     except (BrokenPipeError, KeyboardInterrupt):
         pass
