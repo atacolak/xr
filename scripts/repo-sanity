@@ -3,11 +3,12 @@
 
 Scans the working tree NUL-safely. Distinguishes:
   - always-fatal: control characters / captured command-help names / escaping
-    symlinks in the working tree (even if untracked)
+    symlinks in the working tree (even if untracked, unless git ignores it --
+    ignored content cannot be committed, so it cannot become repo damage)
   - tracked-fatal: Android build products, APKs, proprietary SDK bits that
     should never be in git
-Ignored local build caches (.gradle, .cxx, build/, local.properties, APKs)
-are allowed as untracked files.
+Ignored local build caches (.gradle, .cxx, build/, local.properties, APKs,
+virtualenvs) are allowed as untracked files.
 """
 from __future__ import annotations
 
@@ -48,6 +49,27 @@ def git_ls_files() -> list[str]:
         capture_output=True,
     )
     return [p.decode("utf-8", "surrogateescape") for p in r.stdout.split(b"\0") if p]
+
+
+def git_ignored_paths() -> set[Path]:
+    """Paths git ignores, which therefore cannot be committed.
+
+    A virtualenv is the motivating case: it is full of symlinks pointing at an
+    interpreter outside the repo, so any agent that makes one (.venv/bin/python
+    -> python3) turned this check into three errors about files that git will
+    never carry. Ignored content is not hygiene risk; untracked-but-not-ignored
+    content still is, and is still reported.
+    """
+    r = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+        check=True,
+        capture_output=True,
+    )
+    return {
+        (ROOT / p.decode("utf-8", "surrogateescape")).resolve()
+        for p in r.stdout.split(b"\0")
+        if p
+    }
 
 def has_control(name: str) -> bool:
     return any(ord(c) < 32 for c in name)
@@ -108,11 +130,19 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
+    ignored = git_ignored_paths()
+
     for dirpath, dirnames, filenames in os.walk(ROOT, topdown=True, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         parent = Path(dirpath)
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in SKIP_DIRS and (parent / d).resolve() not in ignored
+        ]
         for name in list(dirnames) + list(filenames):
             p = parent / name
+            if p.resolve() in ignored:
+                continue
             rel = os.path.relpath(p, ROOT)
             for problem in component_problems(rel):
                 errors.append(f"{rel}: {problem}")
