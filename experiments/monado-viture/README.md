@@ -99,6 +99,41 @@ windowed target and the window then stays **black** even though the client is fo
 (use `info`), and the XCB target may log `Selected display 0 has no size -- Falling
 back to display 3: DP-2`, which is normal and not an error.
 
+## The head-tracked demo (`tools/headtrack-demo.py`)
+
+Shows the stereo scene from the glasses' own orientation: device pose -> camera
+yaw/pitch/roll -> per-eye render -> fullscreen presenter. Rotation-only (3DoF): the camera
+position stays at the origin, but it *takes* a position, so a 6DoF pose drops in unchanged.
+
+### pose sources (`--src`)
+
+| | what | caveat |
+|---|---|---|
+| `poll` (default) | `get_gl_pose_carina` | correct OpenGL frame, gravity-anchored pitch/roll, but it **drifts**: measured 30 deg of pitch while the glasses sat untouched. ~30 pose updates/s |
+| `cb` | the device's pose callback | ~800 Hz and rock steady, but its quaternion is in the IMU's North-West-Up frame and disagrees with the gravity-anchored attitude, so the axes come out permuted |
+| `synth` | a known sinusoid, no device at all | verifies the render/present chain with the glasses unplugged; its reported pose age is meaningless by construction |
+
+### presenters (`--presenter auto|gl|shm`)
+
+- `shm` = `tools/xpresent`: XShmPutImage, full-size frames. ~60 fps ceiling, because ffmpeg
+  has to scale and the pipe then carries 18.4 MB/frame.
+- `gl` = `tools/xpresent-gl`: small frames over the pipe, GPU scales. The only way to the
+  panel's 90 Hz here. `auto` prefers it once built.
+- XRender scaling is not an option on this X server: `ShmCreatePixmap` returns
+  `BadImplementation`, and a picture-transform composite renders *nothing* (both measured).
+
+### knobs that matter
+
+- `--fov` (44.9 default): the Luma Ultra is 52 deg diagonal, ~44.9 horizontal on an 8:5 panel.
+  If head motion feels too fast or too slow, this is the number to calibrate against the room.
+- `--smooth` (0.015 s) and `--deadband` (0.03 deg): the deadband kills sensor micro-jitter
+  with no lag at all; smoothing is lag by definition, so it stays light.
+- `--flip-xy` (on): the SDK's GL pose has z pointing backward while this renderer looks down
+  +z; without it yaw and pitch drive the scene backwards.
+- `SIGUSR1` re-anchors: `kill -USR1 $(pgrep -f headtrack-demo)`. IMU yaw drifts inherently.
+- `--res` (640x400 per eye): 119 fps of render headroom at 3x upscale. Raise it for sharpness
+  and expect the frame rate to fall.
+
 ## Hazard: on this workstation, restarting X kills the agent sessions
 
 Every omp / herdr session on sfub descends from the X session
