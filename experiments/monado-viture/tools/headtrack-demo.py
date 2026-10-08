@@ -302,6 +302,7 @@ def main() -> int:
     else:
         threading.Thread(target=reader, daemon=True).start()
 
+    render_errors = [0]
     smoothed = [0.0, 0.0, 0.0, None]
     smoothed_q = [None, None, None, None]
     ref_q = [None]
@@ -413,7 +414,17 @@ def main() -> int:
             # slow self-drift, so a stuttering display is distinguishable from a still scene
             now_mono = time.monotonic()
             phase = (now_mono * 0.2) % 1.0
-            frame = demo.render_frame(phase, cam, now_mono).tobytes()
+            try:
+                frame = demo.render_frame(phase, cam, now_mono).tobytes()
+            except Exception as exc:
+                # One bad frame must not kill a demo that is on someone's face. Report it,
+                # keep the previous frame, and carry on: a stuck image is far easier to
+                # diagnose later than a dead process is to notice now.
+                render_errors[0] += 1
+                if render_errors[0] <= 3 or render_errors[0] % 100 == 0:
+                    print(f"  render error #{render_errors[0]}: {type(exc).__name__}: {exc}", flush=True)
+                time.sleep(0.01)
+                continue
             if encoder is not None:
                 encoder.stdin.write(frame)
             n += 1
@@ -431,7 +442,7 @@ def main() -> int:
             if now - t_report > 2.0:
                 age_ms = 1000.0 * (time.monotonic() - (stream_t0[0] + pose_t)) if stream_t0[0] else float("nan")
                 print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   "
-                      f"pos {px0:+.3f} {py0:+.3f} {pz0:+.3f} m   yaw {last[0]:+7.1f}  "
+                      f"pos {px0:+.3f} {py0:+.3f} {pz0:+.3f} m   errs {render_errors[0]:4d}   yaw {last[0]:+7.1f}  "
                       f"pitch {last[1]:+7.1f}  roll {last[2]:+7.1f}", flush=True)
                 n, t_report = 0, now
     except (BrokenPipeError, KeyboardInterrupt):

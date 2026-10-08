@@ -159,6 +159,8 @@ def project_polys(cam: Camera, polys, eye: int):
     and Pillow paints that face across the frame, which was the flat grey wash.
     """
     P = np.asarray(polys, dtype=float)                       # (M,N,3)
+    if P.size == 0:
+        return []
     C = (P - cam.pos) @ cam.rot - cam.eye_offset * eye       # world -> camera space
     m, n = C.shape[0], C.shape[1]
     inside = C[:, :, 2] > NEAR
@@ -356,9 +358,16 @@ def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, e
 
     shades = 0.50 + 0.50 * np.maximum(0.0, n_world @ _LIGHT)
     xs, ys, zs = centre_v
-    pending = [(float(n_world[i, 2]), shaded(colour, float(shades[i]), zs))
-               for i in range(6) if shaded_faces[i]]
-    faces = [world[i] for i in range(6) if shaded_faces[i]]
+    if shaded_faces.any():
+        idx = [i for i in range(6) if shaded_faces[i]]
+    else:
+        # The viewer is inside the box: every outward normal faces away, so nothing is
+        # visible from outside. Draw the interior rather than nothing -- with 6DoF the
+        # operator can genuinely walk into an object, and vanishing was both wrong and (on
+        # an empty vertex array) a crash in the batched projection.
+        idx = list(range(6))
+    pending = [(float(n_world[i, 2]), shaded(colour, float(shades[i]), zs)) for i in idx]
+    faces = [world[i] for i in idx]
     for (depth_key, fill), pts in zip(pending, project_polys(cam, faces, eye)):
         if pts is not None:
             d.polygon(pts, fill=fill)
