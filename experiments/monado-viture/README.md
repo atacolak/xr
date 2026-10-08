@@ -27,6 +27,27 @@ is an external dependency and is **not** vendored here:
 
 See `components.toml` and `docs/architecture.md`.
 
+## Status
+
+Working and measured on hardware (Luma Ultra, DP-2 at 3840x1200@90 SBS):
+
+- 6DoF head-tracked stereo at **88-90 fps**, pose age **7-18 ms**, `dropped 0`, `errs 0`.
+- Orientation from the SDK **quaternion** (`docs/pose-pipeline.md` explains why Euler was a bug).
+- Position grounded on a captured reference, VIO origin at the head (`--reset`).
+- A landmark world for judging translation, and a synthetic source so all of it can be tested
+  with the glasses unplugged.
+
+Known and deliberate:
+
+- **VIO drifts.** It is relative and has no absolute reference; re-anchor with `SIGUSR1`. The
+  callback source does not drift but needs a frame conversion. This is the main open item for
+  real world-lock, and it is upstream of the driver, not the demo.
+- The **deadband** is hysteresis: small movements away and back can leave the view a fraction
+  of a degree off. `--smooth 0 --deadband 0` disables it.
+- The driven **Monado driver** consumes the same SDK pose; selecting 6DoF there and passing
+  translation through to `xrt_device::get_tracked_pose` is the next piece of work, and it is
+  what world-locks real applications (BeamNG).
+
 ## Milestones
 
 | | milestone | state |
@@ -101,17 +122,42 @@ back to display 3: DP-2`, which is normal and not an error.
 
 ## The head-tracked demo (`tools/headtrack-demo.py`)
 
-Shows the stereo scene from the glasses' own orientation: device pose -> camera
-yaw/pitch/roll -> per-eye render -> fullscreen presenter. Rotation-only (3DoF): the camera
-position stays at the origin, but it *takes* a position, so a 6DoF pose drops in unchanged.
+Shows the stereo scene from the glasses' own pose: device quaternion + position -> camera ->
+per-eye render -> fullscreen presenter. **6DoF by default** with `--6dof`, orientation-only
+with `--3dof`. See `docs/pose-pipeline.md` for the pose path, the validity gate, and what
+grounds the world.
+
+### two worlds, because one of them cannot show translation
+
+`--world room` (default for judging 6DoF) is a landmark world: four cardinally-placed
+coloured columns, distance gates receding along +z whose posts get taller with distance, an
+origin plate under the viewer, and everything static. `--world drift` is the original —
+objects ring the viewer and move radially, which shows rotation well.
+
+The reason for two is worth stating, because it cost a round of confusion: the drift world
+**physically cannot** demonstrate translation. Its floor grid is rotationally symmetric and
+landmark-free, so sliding under it looks identical, and its objects move on their own — which
+is indistinguishable from the viewer moving. Judging forward/back and left/right needs
+something static to compare against.
+
+```sh
+tools/headtrack-demo.py --6dof --src poll --world room    # 6DoF, landmarks, on the panels
+tools/headtrack-demo.py --3dof --src poll                 # orientation only
+tools/headtrack-demo.py --src synth --world room          # no device needed
+```
 
 ### pose sources (`--src`)
 
 | | what | caveat |
 |---|---|---|
-| `poll` (default) | `get_gl_pose_carina` | correct OpenGL frame, gravity-anchored pitch/roll, but it **drifts**: measured 30 deg of pitch while the glasses sat untouched. ~30 pose updates/s |
-| `cb` | the device's pose callback | ~800 Hz and rock steady, but its quaternion is in the IMU's North-West-Up frame and disagrees with the gravity-anchored attitude, so the axes come out permuted |
+| `poll` (default) | `get_gl_pose_carina` | **correct frame** — this is the one to use. Drifts (visual-inertial odometry is relative; see `docs/pose-pipeline.md`) |
+| `cb` | the device's pose callback | measured better in every other way — 600/600 valid, no placeholders, rock steady, gravity-anchored at y ~ 1.0 m — but its quaternion is in the IMU's own frame, so orientation comes out permuted and the view "moves in weird places". **Fixing this basis is the highest-value remaining work for world-lock** |
 | `synth` | a known sinusoid, no device at all | verifies the render/present chain with the glasses unplugged; its reported pose age is meaningless by construction |
+
+Every sample passes a validity gate before it is shown: the SDK emits zeroed placeholder poses
+(120 in the first second of every session, measured) which, when the head points away from the
+origin, used to throw the view to a fixed direction for one frame. The status line reports
+`dropped` (rejected samples) and `errs` (render exceptions caught per frame).
 
 ### presenters (`--presenter auto|gl|shm`)
 

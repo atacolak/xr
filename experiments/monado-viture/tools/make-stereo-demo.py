@@ -239,6 +239,61 @@ OBJECTS = [
 ]
 
 
+# The world the renderer draws. "drift" is the original: objects ring the viewer and move
+# radially, which shows rotation well. "room" is a landmark world for judging translation.
+WORLD = "drift"
+SPIN_OBJECTS = True
+
+
+def set_world(name: str) -> None:
+    """Select the world. See ROOM_OBJECTS for why judging 6DoF needed a different one."""
+    global WORLD, SPIN_OBJECTS
+    WORLD = name
+    SPIN_OBJECTS = name != "room"
+
+
+def _column(bearing: float, radius: float, colour, size: float = 0.34):
+    """Three stacked cubes standing on the floor: a landmark you can count."""
+    out = []
+    for k in range(3):
+        out.append((bearing, (radius, radius), FLOOR_Y + size + 2.0 * size * k, size, colour, 0.0))
+    return out
+
+
+# A world built to answer "is translation working?". The drifting-object world cannot:
+# its floor grid is rotationally symmetric and landmark-free, so sliding under it looks
+# identical, and its objects move on their own -- which is indistinguishable from the
+# viewer moving. Here:
+#   * four cardinally-placed columns, one colour each, so left/right and forward/back have
+#     a reference you can name;
+#   * a graduated ruler of colour-coded blocks along +z at 1..5 m, so walking a metre forward
+#     changes which block is at your feet -- a distance readout you can check by eye;
+#   * a plate on the floor at the origin, so "where I started" is marked.
+# Everything is static (radius near == far, no spin): motion in the view then means the
+# viewer moved, which is the whole point.
+def room_objects():
+    objs = []
+    for bearing, colour in ((0.0, (255, 70, 70)), (90.0, (40, 230, 110)),
+                            (180.0, (60, 170, 255)), (270.0, (255, 190, 40))):
+        objs += _column(bearing, 6.0, colour)
+    # Distance gates receding along +z at 2,4,6,8 m, offset to either side of the axis so
+    # they do not occlude each other or the north column. Each gate's posts get taller with
+    # distance, so "how far away is that gate" is readable at a glance -- which makes a metre
+    # of forward motion a visible change rather than a guess.
+    for d in (2.0, 4.0, 6.0, 8.0):
+        colour = (255, 255, 255) if int(d) % 4 else (170, 170, 190)
+        off = math.degrees(math.atan2(0.75, d))
+        for sign in (-1.0, 1.0):
+            for k in range(int(d / 2)):
+                objs.append((sign * off, (d, d), FLOOR_Y + 0.18 + 0.36 * k, 0.18, colour, 0.0))
+    # origin plate: stand on it and you are at the reference point
+    objs.append((0.0, (0.0, 0.0), FLOOR_Y + 0.02, 0.85, (70, 95, 70), 0.0))
+    return objs
+
+
+ROOM_OBJECTS = None
+
+
 def object_state(t: float, bearing: float, near: float, far: float, height: float, phase: float):
     """Position of an object at animation phase t. Radial only: it changes distance."""
     r = (near + far) / 2.0 + (far - near) / 2.0 * math.cos(2.0 * math.pi * (t + phase))
@@ -389,16 +444,29 @@ def render_eye(t: float, eye: int, cam: Camera, spin_t: float | None = None) -> 
     draw_wall_ring(d, cam, eye)
     draw_reference_frame(d, cam, eye)
     drawables = []
-    for bearing, (near, far), height, half, colour, phase in OBJECTS:
+    if WORLD == "room":
+        global ROOM_OBJECTS
+        if ROOM_OBJECTS is None:
+            ROOM_OBJECTS = room_objects()
+        for bearing, (near, far), height, half, colour, phase in ROOM_OBJECTS:
+            centre, r = object_state(t, bearing, near, far, height, phase)
+            drawables.append((r, centre, half, colour, phase, 0.0))
+    for bearing, (near, far), height, half, colour, phase in ([] if WORLD == "room" else OBJECTS):
         centre, r = object_state(t, bearing, near, far, height, phase)
         drawables.append((r, centre, half, colour, phase))
-    for _, centre, half, colour, phase in sorted(drawables, key=lambda it: -it[0]):  # far first
+    for item in sorted(drawables, key=lambda it: -it[0]):  # far first
+        _, centre, half, colour, phase = item[:5]
+        spin_override = item[5] if len(item) > 5 else None
         # Different rate per object so they never sync up, and a different starting angle so
         # none of them is face-on at t=0.
         # spin_t is *unwrapped* seconds. The animation phase wraps every 5 s, and
         # multiplying a wrapping value by ~20 rad/s made every object snap round by
         # hundreds of degrees at the same instant, every five seconds.
-        spin = math.radians(25.0 + 7.0 * phase + (8.0 + 13.0 * phase) * (spin_t if spin_t is not None else t))
+        t_unwrapped = spin_t if spin_t is not None else t
+        if spin_override is not None and not SPIN_OBJECTS:
+            spin = spin_override
+        else:
+            spin = math.radians(25.0 + 7.0 * phase + (8.0 + 13.0 * phase) * t_unwrapped)
         draw_box(d, cam, centre, half, colour, eye, spin=spin)
     return img
 
@@ -415,6 +483,10 @@ def main() -> int:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("out", nargs="?", default="docs/stereo-demo.mp4")
+    ap.add_argument("--world", choices=("drift", "room"), default="drift",
+                    help="drift = objects ring you and move radially (shows rotation). "
+                         "room = static landmarks, a distance ruler and an origin plate "
+                         "(shows translation; the drift world physically cannot).")
     ap.add_argument("--frames", type=int, default=180)
     ap.add_argument("--fps", type=int, default=30)
     ap.add_argument("--crf", type=int, default=18)
@@ -428,6 +500,7 @@ def main() -> int:
     a = ap.parse_args()
 
     FOV_H_DEG = a.fov
+    set_world(a.world)
     cam = Camera(pos=tuple(float(v) for v in a.cam.split(",")), yaw=a.yaw, pitch=a.pitch, roll=a.roll)
 
     if a.still:

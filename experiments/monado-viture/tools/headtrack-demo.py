@@ -93,6 +93,12 @@ def main() -> int:
     ap.add_argument("--res", default="640x400", help="per-eye render size (scaled up for the panels)")
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)
+    ap.add_argument("--world", choices=("drift", "room"), default="room",
+                    help="room = static landmarks + a distance ruler + an origin plate, for "
+                         "judging translation; drift = the radial object ring (rotation). "
+                         "The room world is the default because the drift world cannot show "
+                         "translation: its floor grid is symmetric and its objects move on "
+                         "their own, which is indistinguishable from the viewer moving.")
     ap.add_argument("--6dof", dest="sixdof", action="store_true",
                     help="use the device's 6DoF pose (Quaternion + translation) instead of "
                          "3DoF orientation only. 6DoF is the SDK default; --3dof overrode it.")
@@ -313,6 +319,7 @@ def main() -> int:
     n = 0
     t_report = time.monotonic()
     last = (0.0, 0.0, 0.0)
+    demo.set_world(a.world)
     try:
         while True:
             with lock:
