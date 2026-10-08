@@ -284,8 +284,11 @@ def room_objects():
         colour = (255, 255, 255) if int(d) % 4 else (170, 170, 190)
         off = math.degrees(math.atan2(0.75, d))
         for sign in (-1.0, 1.0):
-            for k in range(int(d / 2)):
-                objs.append((sign * off, (d, d), FLOOR_Y + 0.18 + 0.36 * k, 0.18, colour, 0.0))
+            # one post per side, height proportional to distance. Stacking blocks per metre
+            # read better but doubled the geometry: 33 boxes dropped the demo to 70-75 fps
+            # where the drift world's 14 held 88-90.
+            h = 0.20 * (1.0 + d * 0.5)
+            objs.append((sign * off, (d, d), FLOOR_Y + h, h, colour, 0.0))
     # origin plate: stand on it and you are at the reference point
     objs.append((0.0, (0.0, 0.0), FLOOR_Y + 0.02, 0.85, (70, 95, 70), 0.0))
     return objs
