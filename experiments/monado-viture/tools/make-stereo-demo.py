@@ -61,6 +61,28 @@ class Camera:
     combined motions.
     """
 
+    @classmethod
+    def from_quat(cls, quat, pos=(0.0, 0.0, 0.0)):
+        """Build a camera from a quaternion (w, x, y, z), skipping Euler angles.
+
+        The demo used to decompose the pose into yaw/pitch/roll and rebuild a rotation from
+        them. That is fine until the head pitches near +-90 deg, where yaw and roll act on
+        the same axis: the decomposition is degenerate, the reported yaw flips 180 deg, and
+        the view can no longer turn -- reported from inside the headset as the head "getting
+        stuck" when looking up, unable to pitch or roll further. A quaternion has no such
+        singularity, so the rotation is taken from it directly.
+        """
+        w, x, y, z = quat
+        n = math.sqrt(w * w + x * x + y * y + z * z) or 1.0
+        w, x, y, z = w / n, x / n, y / n, z / n
+        c = cls(pos=pos)
+        c.rot = np.array([
+            [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+            [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+            [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+        ])
+        return c
+
     def __init__(self, pos=(0.0, 0.0, 0.0), yaw=0.0, pitch=0.0, roll=0.0):
         self.pos = np.array(pos, dtype=float)
         cy, sy = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
@@ -89,6 +111,31 @@ class Camera:
             z = 1e-3
         f = focal_px()
         return (EYE_W / 2 + f * c[0] / z, EYE_H / 2 - f * c[1] / z)
+
+
+def quat_mul(a, b):
+    """Hamilton product, a then b applied (a * b)."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return (aw * bw - ax * bx - ay * by - az * bz,
+            aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw)
+
+
+def quat_conj(q):
+    return (q[0], -q[1], -q[2], -q[3])
+
+
+def quat_from_euler(yaw, pitch, roll):
+    """Quaternion for Camera's Ry(yaw).Rx(pitch).Rz(roll) convention."""
+    cy, sy = math.cos(math.radians(yaw) / 2), math.sin(math.radians(yaw) / 2)
+    cp, sp = math.cos(math.radians(pitch) / 2), math.sin(math.radians(pitch) / 2)
+    cr, sr = math.cos(math.radians(roll) / 2), math.sin(math.radians(roll) / 2)
+    qy = (cy, 0.0, sy, 0.0)
+    qx = (cp, sp, 0.0, 0.0)
+    qz = (cr, 0.0, 0.0, sr)
+    return quat_mul(quat_mul(qy, qx), qz)
 
 
 NEAR = 0.12  # metres; see project_poly
@@ -208,53 +255,31 @@ def shaded(colour, factor: float, z: float) -> tuple[int, int, int]:
 
 
 def draw_ground(d: ImageDraw.ImageDraw, cam: Camera, eye: int, r_near: float = 0.6, r_far: float = 14.0) -> None:
-    """A circular floor: concentric discs painted far to near, with radial spokes.
+    """A wireframe floor: concentric rings and radial spokes, nothing filled.
 
-    Two things were wrong with the old one, both reported from inside the headset. It was
-    *square* -- the bands were axis-aligned annuli, so from the inside you saw their 45 deg
-    diagonals as a V-shaped cone opening away from you (the operator measured it at "like
-    40 degrees", which is a square's diagonal). And its radial "grid lines" were drawn two
-    *screen* pixels wide, constant width regardless of distance, so they arrived as thick
-    grey wedges near the camera.
-
-    A disc's shading can depend only on distance, so the band boundaries are arcs. Painting
-    a disc of radius r_i+eps in the line colour and then radius r_i in the floor colour, far
-    to near, leaves exactly one visible ring line per boundary: nearer discs are smaller and
-    cannot cover the outer rings. Spokes are quads of constant *world* width, so their
-    apparent width shrinks with distance like real geometry.
+    An earlier version shaded the floor as filled discs so the ground read as a surface.
+    From inside the headset that came back as "I don't like the grey what's under me, like a
+    circular thing -- it should just be grid". It is a grid now: rings whose boundaries are
+    arcs, and spokes, both drawn as polylines so nothing is filled and the world stays black
+    behind them. That is also cheaper, since the fill was the expensive part.
     """
-    rings = 6
-    segments = 32
-
+    rings, segments, spokes = 6, 32, 24
     radii = [r_near * (r_far / r_near) ** (i / rings) for i in range(rings + 1)]
     ang = [2 * math.pi * i / segments for i in range(segments)]
-    batch, fills = [], []
-    for r in reversed(radii):
-        # A gentle falloff, not 1/r. At 64*(r_near/r) the far floor came out (2,2,8) --
-        # drawn, and invisible: at a level gaze the only floor you can see is the far part,
-        # so the floor appeared to be missing. Rings and spokes carry the depth cue now;
-        # this shading only has to stop the ground reading as a black void.
-        shade = int(20 + 44 * (r_near / r) ** 0.4)
-        batch.append([(r * 1.006 * math.sin(a), FLOOR_Y, r * 1.006 * math.cos(a)) for a in ang])
-        fills.append((13, 13, 17))                    # the ring line, just outside r
-        batch.append([(r * math.sin(a), FLOOR_Y, r * math.cos(a)) for a in ang])
-        fills.append((shade, shade, min(255, shade + 6)))
-    for pts, fill in zip(project_polys(cam, batch, eye), fills):
-        if pts is not None:
-            d.polygon(pts, fill=fill)
 
-    spokes = 24
+    # rings
+    for r in radii:
+        pts = project_poly(cam, [(r * math.sin(a), FLOOR_Y, r * math.cos(a)) for a in ang], eye)
+        if pts:
+            d.line([(float(x), float(y)) for x, y in pts] + [(float(pts[0][0]), float(pts[0][1]))],
+                   fill=(46, 46, 56), width=1)
+    # spokes
     for k in range(spokes):
         a = 2 * math.pi * k / spokes
-        w = 0.055 / 2.0                               # metres; constant world half-width
-        quad = project_poly(cam, [
-            ((r_near - w) * math.sin(a), FLOOR_Y, (r_near - w) * math.cos(a)),
-            ((r_near + w) * math.sin(a), FLOOR_Y, (r_near + w) * math.cos(a)),
-            ((r_far + w) * math.sin(a), FLOOR_Y, (r_far + w) * math.cos(a)),
-            ((r_far - w) * math.sin(a), FLOOR_Y, (r_far - w) * math.cos(a)),
-        ], eye)
-        if quad is not None:
-            d.polygon(quad, fill=(16, 16, 21))
+        seg = project_segment(cam, (r_near * math.sin(a), FLOOR_Y, r_near * math.cos(a)),
+                              (r_far * math.sin(a), FLOOR_Y, r_far * math.cos(a)), eye)
+        if seg is not None:
+            d.line([(float(x), float(y)) for x, y in seg], fill=(34, 34, 42), width=1)
 
 
 def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float = 10.5,
@@ -348,7 +373,7 @@ def draw_reference_frame(d: ImageDraw.ImageDraw, cam: Camera, eye: int) -> None:
         d.line(xy + [xy[0]], fill=(110, 110, 110), width=3)
 
 
-def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
+def render_eye(t: float, eye: int, cam: Camera, spin_t: float | None = None) -> Image.Image:
     img = Image.new("RGB", (EYE_W, EYE_H), (0, 0, 0))  # black = transparent on the OLED
     d = ImageDraw.Draw(img)
     draw_ground(d, cam, eye)
@@ -361,15 +386,18 @@ def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
     for _, centre, half, colour, phase in sorted(drawables, key=lambda it: -it[0]):  # far first
         # Different rate per object so they never sync up, and a different starting angle so
         # none of them is face-on at t=0.
-        spin = math.radians(25.0 + 7.0 * phase + (8.0 + 13.0 * phase) * t)
+        # spin_t is *unwrapped* seconds. The animation phase wraps every 5 s, and
+        # multiplying a wrapping value by ~20 rad/s made every object snap round by
+        # hundreds of degrees at the same instant, every five seconds.
+        spin = math.radians(25.0 + 7.0 * phase + (8.0 + 13.0 * phase) * (spin_t if spin_t is not None else t))
         draw_box(d, cam, centre, half, colour, eye, spin=spin)
     return img
 
 
-def render_frame(t: float, cam: Camera) -> np.ndarray:
+def render_frame(t: float, cam: Camera, spin_t: float | None = None) -> np.ndarray:
     frame = np.zeros((EYE_H, EYE_W * 2, 3), dtype=np.uint8)
-    frame[:, :EYE_W] = np.asarray(render_eye(t, -1, cam))
-    frame[:, EYE_W:] = np.asarray(render_eye(t, +1, cam))
+    frame[:, :EYE_W] = np.asarray(render_eye(t, -1, cam, spin_t))
+    frame[:, EYE_W:] = np.asarray(render_eye(t, +1, cam, spin_t))
     return frame
 
 

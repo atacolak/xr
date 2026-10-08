@@ -52,33 +52,36 @@ def load_renderer():
     return mod
 
 
-def sample_ok(status, pose, pos, last_pose, last_pos) -> bool:
+def sample_ok(status, pose, pos, last_pose, last_pos, ok=1, consecutive_bad=0) -> bool:
     """Is this pose sample believable enough to show?
 
-    Two kinds are not, and the last good pose is held instead:
+    The gate keys on the glitch, not on a flag. `status` cannot be used to reject samples:
+    in 3DoF the SDK emits placeholders (zeros) tagged status=1, but in 6DoF *every* sample
+    -- good ones included -- is status=1 (measured: 958/958 in a polled 6DoF capture). An
+    earlier version rejected on status != 0 and therefore threw away the entire 6DoF stream,
+    freezing the view at the warm-up origin with the drop counter climbing at the sample rate.
 
-      * the vendor marks it invalid (status != 0). The SDK emits zeroed poses while it
-        settles, and this loop used to apply every line verbatim -- so a single bad sample
-        snapped the view to the scene origin for one frame and then back. That is the
-        split-second jump reported from inside the headset.
-      * it would teleport the head. No real head turns 60 deg or moves a metre between
-        samples, so a jump that size is corrupt data rather than motion. This is also what
-        will keep a 6DoF pose honest once translation is live.
+    What actually corrupts the view is a *one-off* jump: the SDK's placeholder zeros, when
+    the head is pointing well away from the origin, throw the view to a fixed direction for
+    a single frame. So:
+
+      * ok == 0 from the vendor is believed;
+      * a sample within 60 deg and 1 m of the last good one is accepted (no real head turns
+        60 deg or moves a metre between samples);
+      * a *sustained* different pose is real -- a VIO reset, or the coordinate frame moving
+        under us -- and is adopted after 20 consecutive samples;
+      * but a sustained pose is only adopted if status == 0, so a run of tagged placeholders
+        (120 in a row, measured) can never become the new reference.
     """
-    if status != 0:
-        return False
-    if pose == (0.0, 0.0, 0.0):
-        # The SDK's placeholder is exactly zero in all three channels. A real pose landing
-        # on exactly 0.000 in all three axes is a measure-zero event, so treating it as
-        # invalid costs one frame of held pose at worst; treating it as valid snaps the view
-        # to the reference direction. (Measured: status==0 with an all-zero pose was never
-        # observed -- the 120 placeholders in a startup capture were all status==1 -- so
-        # this is belt and braces for a second source, not the primary gate.)
+    if not ok:
         return False
     if last_pose is None:
         return True
-    return (max(abs(a - b) for a, b in zip(pose, last_pose)) <= 60.0
-            and max(abs(a - b) for a, b in zip(pos, last_pos)) <= 1.0)
+    off = (max(abs(a - b) for a, b in zip(pose, last_pose)) > 60.0
+           or max(abs(a - b) for a, b in zip(pos, last_pos)) > 1.0)
+    if not off:
+        return True
+    return consecutive_bad >= 20 and status == 0
 
 
 def main() -> int:
@@ -90,6 +93,9 @@ def main() -> int:
     ap.add_argument("--res", default="640x400", help="per-eye render size (scaled up for the panels)")
     ap.add_argument("--screen", default="3840x1200", help="panel size the presenter blits to")
     ap.add_argument("--seconds", type=float, default=600.0)
+    ap.add_argument("--6dof", dest="sixdof", action="store_true",
+                    help="use the device's 6DoF pose (Quaternion + translation) instead of "
+                         "3DoF orientation only. 6DoF is the SDK default; --3dof overrode it.")
     ap.add_argument("--no-presenter", action="store_true", help="render and measure only")
     ap.add_argument("--presenter", choices=("auto", "gl", "shm"), default="auto",
                     help="gl = GPU presenter (tools/xpresent-gl: small frames over the pipe, GPU "
@@ -144,7 +150,14 @@ def main() -> int:
     env["LD_LIBRARY_PATH"] = f"{SDK}/x86_64{os.pathsep}{env.get('LD_LIBRARY_PATH', '')}"
     env["DISPLAY"] = env.get("DISPLAY", ":1")
 
-    pose_args = [str(tool), "--3dof", "--seconds", str(a.seconds), "--json", "--auto-exposure"]
+    pose_args = [str(tool), "--seconds", str(a.seconds), "--json", "--auto-exposure"]
+    if not a.sixdof:
+        pose_args.append("--3dof")
+    else:
+        # Put the VIO origin at the head. Without it the origin sits wherever the VIO
+        # happened to initialise, and the callback source then reports an absolute height
+        # (measured y ~ 0.87 m), which floats the whole scene under the viewer.
+        pose_args.append("--reset")
     if not a.no_flip_xy:
         pose_args.append("--flip-xy")
     if a.src == "cb":
@@ -214,14 +227,15 @@ def main() -> int:
     # "for line in stdout" consumes every sample in order: the pipe accumulates a backlog
     # and the view falls steadily behind the head. That reads as drift, choppiness and
     # nausea, and no amount of FOV or axis fixing helps. Keep only the newest sample.
-    latest = {"pose": (0.0, 0.0, 0.0), "pos": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1,
-              "dropped": 0}
+    latest = {"pose": (0.0, 0.0, 0.0), "pos": (0.0, 0.0, 0.0), "quat": None, "t": 0.0,
+              "status": 1, "n": -1, "dropped": 0}
     lock = threading.Lock()
     stream_t0 = [None]
 
     def reader():
         last = [None]      # last pose we believed: (yaw, pitch, roll)
         last_pos = [None]  # and its position, so a 6DoF teleport is caught too
+        streak = [0]       # consecutive rejects, used to tell a jump from a real move
         # see sample_ok() for why samples get dropped
         for line in pose.stdout:
             if not line.startswith("{"):
@@ -234,7 +248,9 @@ def main() -> int:
                 stream_t0[0] = time.monotonic() - d.get("t", 0.0)
             status = d.get("status", 1)
             p = (d.get("yaw", 0.0), d.get("pitch", 0.0), d.get("roll", 0.0))
-            q = (d.get("px", 0.0), d.get("py", 0.0), d.get("pz", 0.0))
+            pos_now = (d.get("px", 0.0), d.get("py", 0.0), d.get("pz", 0.0))
+            quat_now = (d["qw"], d["qx"], d["qy"], d["qz"]) if "qw" in d else None
+            ok = d.get("ok", 1)
             # Two kinds of sample are thrown away and the last good pose is held instead:
             #   * the vendor marks it invalid (status != 0). The SDK emits zeroed poses while
             #     it settles, and this loop used to apply every line verbatim -- so a single
@@ -244,15 +260,18 @@ def main() -> int:
             #   * it would teleport the head. No real head turns 60 deg or moves a metre
             #     between samples, so a jump that size is corrupt data, not motion. This also
             #     keeps 6DoF honest once translation is live.
-            if not sample_ok(status, p, q, last[0], last_pos[0]):
+            if not sample_ok(status, p, pos_now, last[0], last_pos[0], ok, streak[0]):
+                streak[0] += 1
                 with lock:
                     latest["dropped"] += 1
                     latest["status"] = status
                 continue
-            last[0], last_pos[0] = p, q
+            streak[0] = 0
+            last[0], last_pos[0] = p, pos_now
             with lock:
                 latest["pose"] = p
-                latest["pos"] = q
+                latest["pos"] = pos_now
+                latest["quat"] = quat_now
                 latest["t"] = d.get("t", 0.0)
                 latest["status"] = status
                 latest["n"] += 1
@@ -271,6 +290,7 @@ def main() -> int:
                 latest["pos"] = (0.06 * math.sin(2 * math.pi * 0.09 * el),
                                  0.0,
                                  0.10 * math.sin(2 * math.pi * 0.11 * el + 0.7))
+                latest["quat"] = demo.quat_from_euler(*latest["pose"])
                 latest["t"] = el
                 latest["status"] = 0
                 latest["n"] += 1
@@ -283,6 +303,9 @@ def main() -> int:
         threading.Thread(target=reader, daemon=True).start()
 
     smoothed = [0.0, 0.0, 0.0, None]
+    smoothed_q = [None, None, None, None]
+    ref_q = [None]
+    ref_pos = [None]
     prev_t = [time.monotonic()]
     interval = 1.0 / float(a.fps)
     next_deadline = time.monotonic()
@@ -294,6 +317,7 @@ def main() -> int:
             with lock:
                 yaw0, pitch0, roll0 = latest["pose"]
                 px0, py0, pz0 = latest["pos"]
+                quat0 = latest["quat"]
                 pose_t, pose_status = latest["t"], latest["status"]
             d = {"status": pose_status}
             yaw = yaw0 * (-1.0 if a.invert_yaw else 1.0)
@@ -309,6 +333,8 @@ def main() -> int:
                     # invisible. latest[] only ever holds samples that passed sample_ok(), so
                     # these values are a real pose even if a placeholder arrived just now.
                     ref = (yaw, pitch, roll)
+                    ref_q[0] = quat0
+                    ref_pos[0] = (px0, py0, pz0)
                     ref_acc.clear()
                     print(f"re-referenced on yaw {ref[0]:+.1f} pitch {ref[1]:+.1f} roll {ref[2]:+.1f}",
                           flush=True)
@@ -322,6 +348,8 @@ def main() -> int:
                         ref_acc.append((yaw, pitch, roll))
                     if len(ref_acc) >= 20:
                         ref = tuple(sum(v[i] for v in ref_acc) / len(ref_acc) for i in range(3))
+                        ref_q[0] = quat0
+                        ref_pos[0] = (px0, py0, pz0)
                         print(f"recentred on yaw {ref[0]:+.1f} pitch {ref[1]:+.1f} roll {ref[2]:+.1f} "
                               f"({len(ref_acc)} stable samples)", flush=True)
                     yaw, pitch, roll = 0.0, 0.0, 0.0
@@ -329,6 +357,17 @@ def main() -> int:
                     yaw = ang_diff(yaw, ref[0])
                     pitch = ang_diff(pitch, ref[1])
                     roll = ang_diff(roll, ref[2])
+            # Prefer the quaternion when the source provides one. Euler angles are rebuilt
+            # from yaw/pitch/roll here, and that construction is singular when the head
+            # pitches near +-90 deg: yaw and roll then act on the same axis, the reported
+            # yaw flips 180 deg and the view stops turning -- reported as the head getting
+            # stuck looking up, unable to pitch or roll further. The rotation is also taken
+            # relative to the reference *in the world frame*, which is what makes a turn of
+            # the head map to the same turn of the view instead of a per-axis approximation
+            # of it.
+            q_rel = None
+            if quat0 is not None and ref_q[0] is not None:
+                q_rel = demo.quat_mul(demo.quat_conj(ref_q[0]), quat0)
             last = (yaw, pitch, roll)
 
             # Smoothing is lag and a deadband is not, so apply the deadband first: it alone
@@ -337,23 +376,44 @@ def main() -> int:
             now_s = time.monotonic()
             dt = max(1e-3, min(0.25, now_s - prev_t[0]))
             prev_t[0] = now_s
-            sm = smoothed
-            if sm[3] is None:
-                sm[0], sm[1], sm[2] = yaw, pitch, roll
-                sm[3] = 1.0
+            alpha = 1.0 if a.smooth <= 0.0 else (1.0 - math.exp(-dt / a.smooth))
+            if ref_pos[0] is not None and a.sixdof:
+                px0 = px0 - ref_pos[0][0]
+                py0 = py0 - ref_pos[0][1]
+                pz0 = pz0 - ref_pos[0][2]
+            cam = None
+            if q_rel is not None:
+                if q_rel[0] < 0.0:                      # q and -q are the same rotation
+                    q_rel = tuple(-v for v in q_rel)
+                if smoothed_q[0] is None:
+                    smoothed_q[:] = list(q_rel)
+                else:
+                    sm = smoothed_q
+                    dot = abs(sum(a1 * b1 for a1, b1 in zip(sm, q_rel)))
+                    # deadband as an angle: |dot| = cos(theta/2), so hold if theta is under it
+                    if dot < math.cos(math.radians(a.deadband) / 2.0):
+                        blended = [s + alpha * (g - s) for s, g in zip(sm, q_rel)]
+                        norm = math.sqrt(sum(v * v for v in blended)) or 1.0
+                        sm[:] = [v / norm for v in blended]
+                    q_rel = tuple(sm)
+                cam = demo.Camera.from_quat(q_rel, pos=(px0, py0, pz0))
             else:
-                alpha = 1.0 if a.smooth <= 0.0 else (1.0 - math.exp(-dt / a.smooth))
-                for i, target in enumerate((yaw, pitch, roll)):
-                    d_ang = target - sm[i]
-                    if abs(d_ang) < a.deadband:
-                        d_ang = 0.0
-                    sm[i] += alpha * d_ang
-                yaw, pitch, roll = sm[0], sm[1], sm[2]
-
-            cam = demo.Camera(pos=(px0, py0, pz0), yaw=yaw, pitch=pitch, roll=roll)
+                sm = smoothed
+                if sm[3] is None:
+                    sm[0], sm[1], sm[2] = yaw, pitch, roll
+                    sm[3] = 1.0
+                else:
+                    for i, target in enumerate((yaw, pitch, roll)):
+                        d_ang = target - sm[i]
+                        if abs(d_ang) < a.deadband:
+                            d_ang = 0.0
+                        sm[i] += alpha * d_ang
+                    yaw, pitch, roll = sm[0], sm[1], sm[2]
+                cam = demo.Camera(pos=(px0, py0, pz0), yaw=yaw, pitch=pitch, roll=roll)
             # slow self-drift, so a stuttering display is distinguishable from a still scene
-            phase = (time.monotonic() * 0.2) % 1.0
-            frame = demo.render_frame(phase, cam).tobytes()
+            now_mono = time.monotonic()
+            phase = (now_mono * 0.2) % 1.0
+            frame = demo.render_frame(phase, cam, now_mono).tobytes()
             if encoder is not None:
                 encoder.stdin.write(frame)
             n += 1
@@ -370,7 +430,8 @@ def main() -> int:
             now = time.monotonic()
             if now - t_report > 2.0:
                 age_ms = 1000.0 * (time.monotonic() - (stream_t0[0] + pose_t)) if stream_t0[0] else float("nan")
-                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   yaw {last[0]:+7.1f}  "
+                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   "
+                      f"pos {px0:+.3f} {py0:+.3f} {pz0:+.3f} m   yaw {last[0]:+7.1f}  "
                       f"pitch {last[1]:+7.1f}  roll {last[2]:+7.1f}", flush=True)
                 n, t_report = 0, now
     except (BrokenPipeError, KeyboardInterrupt):
