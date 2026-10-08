@@ -77,6 +77,11 @@ class Camera:
         eye_world = self.rot @ (self.eye_offset * eye)  # rot maps camera space -> world
         return self.rot.T @ (np.asarray(p, dtype=float) - self.pos - eye_world)
 
+    def project_cam(self, c) -> tuple[float, float]:
+        """Project an already-computed camera-space point."""
+        f = focal_px()
+        return (EYE_W / 2 + f * c[0] / c[2], EYE_H / 2 - f * c[1] / c[2])
+
     def project(self, p, eye: int) -> tuple[float, float]:
         c = self.to_camera(p, eye)
         z = c[2]
@@ -86,26 +91,71 @@ class Camera:
         return (EYE_W / 2 + f * c[0] / z, EYE_H / 2 - f * c[1] / z)
 
 
+NEAR = 0.12  # metres; see project_poly
+
+
+def project_poly(cam: Camera, pts, eye: int):
+    """Project a polygon, or None if any vertex is behind the near plane.
+
+    This is the fix for the grey wash that looked like objects turning grey from some
+    angles. project() clamps z to 1e-3, so a vertex *behind* the camera divides by about
+    zero and lands millions of pixels away -- and Pillow then paints that face across the
+    whole frame. draw_ground explicitly draws the floor's *rear* bands and lines out to
+    z=-7.2 m, and the wall ring has rear segments, all of which flooded the frame on every
+    single frame with a flat grey. That flood is what appeared whenever the view held
+    nothing else, and it read as objects vanishing behind grey.
+
+    Dropping rather than clipping the polygon is enough here because nothing *visible*
+    straddles the plane: the floor is already split into explicit front and back quads,
+    wall segments that straddle it sit 90 deg off to the side of the view, and the nearest
+    object sits 1.4 m away.
+    """
+    out = []
+    for p in pts:
+        c = cam.to_camera(p, eye)
+        if c[2] <= NEAR:
+            return None
+        out.append(cam.project_cam(c))
+    return out
+
+
+def project_segment(cam: Camera, a, b, eye: int):
+    """Project a segment, clipped to the near plane. None if it is wholly behind."""
+    ca, cb = cam.to_camera(a, eye), cam.to_camera(b, eye)
+    if ca[2] <= NEAR and cb[2] <= NEAR:
+        return None
+    if ca[2] <= NEAR:
+        ca = ca + (cb - ca) * ((NEAR - ca[2]) / (cb[2] - ca[2]))
+    if cb[2] <= NEAR:
+        cb = cb + (ca - cb) * ((NEAR - cb[2]) / (ca[2] - cb[2]))
+    return [cam.project_cam(ca), cam.project_cam(cb)]
+
+
 # Objects ring the camera: (bearing deg, radius near/far, height, half, colour, phase).
 # Bearing 0 = straight ahead, 90 = right, 180 = behind, 270 = left. Motion is *radial*:
 # each object approaches and recedes along its own bearing.
 OBJECTS = [
     # (bearing deg, radius near/far, height, half size, colour, phase)
     # Bigger and fewer: presence near you without turning the view into clutter.
-    (0.0, (1.40, 3.20), -0.70, 0.30, (255, 96, 96), 0.00),
-    (26.0, (1.70, 3.80), 0.10, 0.24, (255, 210, 90), 0.14),
-    (-28.0, (1.60, 3.60), -0.55, 0.26, (120, 200, 255), 0.29),
-    (52.0, (2.20, 4.60), -0.95, 0.28, (255, 170, 90), 0.43),
-    (-56.0, (2.10, 4.40), 0.30, 0.22, (150, 255, 220), 0.57),
-    (92.0, (1.55, 3.40), -0.35, 0.27, (110, 255, 150), 0.71),
-    (-96.0, (1.70, 3.60), -0.85, 0.29, (255, 130, 130), 0.86),
-    (130.0, (2.00, 4.20), 0.20, 0.24, (190, 190, 255), 0.21),
-    (-134.0, (1.90, 4.00), -0.60, 0.26, (255, 240, 160), 0.36),
-    (170.0, (2.30, 4.80), -0.95, 0.28, (215, 150, 255), 0.50),
-    (-174.0, (2.20, 4.60), 0.15, 0.23, (160, 255, 200), 0.64),
-    (0.0, (4.60, 7.60), 0.95, 0.45, (255, 190, 130), 0.79),
-    (-60.0, (4.80, 8.00), 0.85, 0.40, (140, 220, 255), 0.93),
-    (120.0, (4.70, 7.90), 1.00, 0.42, (200, 255, 200), 0.07),
+    # Colours are saturated, not pastel: a pastel at the dim end of the face shading is
+    # grey, and grey objects against a grey wall are objects you cannot see.
+    # Heights cluster around eye level. The per-eye window is only 29 deg tall, so an
+    # object 0.9 m below the eye at 2.3 m sits 22 deg down and is simply not in frame at a
+    # level gaze -- which is the other half of "objects only appear from certain angles".
+    (0.0, (1.40, 3.20), -0.30, 0.30, (255, 70, 70), 0.00),
+    (26.0, (1.70, 3.80), 0.10, 0.24, (255, 190, 40), 0.14),
+    (-28.0, (1.60, 3.60), -0.25, 0.26, (60, 170, 255), 0.29),
+    (52.0, (2.20, 4.60), -0.35, 0.28, (255, 130, 40), 0.43),
+    (-56.0, (2.10, 4.40), 0.30, 0.22, (60, 240, 180), 0.57),
+    (92.0, (1.55, 3.40), -0.20, 0.27, (40, 230, 110), 0.71),
+    (-96.0, (1.70, 3.60), -0.30, 0.29, (255, 80, 80), 0.86),
+    (130.0, (2.00, 4.20), 0.20, 0.24, (120, 110, 255), 0.21),
+    (-134.0, (1.90, 4.00), -0.25, 0.26, (255, 225, 90), 0.36),
+    (170.0, (2.30, 4.80), -0.35, 0.28, (200, 110, 255), 0.50),
+    (-174.0, (2.20, 4.60), 0.15, 0.23, (110, 245, 110), 0.64),
+    (0.0, (4.60, 7.60), 0.95, 0.45, (255, 165, 70), 0.79),
+    (-60.0, (4.80, 8.00), 0.85, 0.40, (90, 200, 255), 0.93),
+    (120.0, (4.70, 7.90), 1.00, 0.42, (170, 255, 110), 0.07),
 ]
 
 
@@ -139,28 +189,28 @@ def draw_ground(d: ImageDraw.ImageDraw, cam: Camera, eye: int, r_near: float = 0
         r0 = r_near * (r_far / r_near) ** (i / bands)
         r1 = r_near * (r_far / r_near) ** ((i + 1) / bands)
         shade = int(64 * (r_near / r0))
-        quad = [
-            cam.project((-r0, FLOOR_Y, r0), eye), cam.project((r0, FLOOR_Y, r0), eye),
-            cam.project((r1, FLOOR_Y, r1), eye), cam.project((-r1, FLOOR_Y, r1), eye),
-        ]
-        quad_back = [
-            cam.project((-r0, FLOOR_Y, -r0), eye), cam.project((r0, FLOOR_Y, -r0), eye),
-            cam.project((r0, FLOOR_Y, -r1), eye), cam.project((-r0, FLOOR_Y, -r1), eye),
-        ]
-        d.polygon(quad, fill=(shade, shade, shade + 6))
-        d.polygon(quad_back, fill=(max(0, shade - 10), max(0, shade - 10), shade))
+        front = project_poly(cam, [(-r0, FLOOR_Y, r0), (r0, FLOOR_Y, r0),
+                                   (r1, FLOOR_Y, r1), (-r1, FLOOR_Y, r1)], eye)
+        back = project_poly(cam, [(-r0, FLOOR_Y, -r0), (r0, FLOOR_Y, -r0),
+                                  (r0, FLOOR_Y, -r1), (-r0, FLOOR_Y, -r1)], eye)
+        if front:
+            d.polygon(front, fill=(shade, shade, shade + 6))
+        if back:
+            d.polygon(back, fill=(max(0, shade - 10), max(0, shade - 10), shade))
     for j in range(-4, 5):
         x = j * 1.6
-        d.line([cam.project((x, FLOOR_Y, r_near), eye), cam.project((x, FLOOR_Y, r_far), eye)],
-               fill=(28, 28, 34), width=2)
+        seg = project_segment(cam, (x, FLOOR_Y, r_near), (x, FLOOR_Y, r_far), eye)
+        if seg:
+            d.line(seg, fill=(28, 28, 34), width=2)
     for j in range(-4, 5):
         z = j * 1.8
-        d.line([cam.project((-r_far, FLOOR_Y, z), eye), cam.project((r_far, FLOOR_Y, z), eye)],
-               fill=(28, 28, 34), width=2)
+        seg = project_segment(cam, (-r_far, FLOOR_Y, z), (r_far, FLOOR_Y, z), eye)
+        if seg:
+            d.line(seg, fill=(28, 28, 34), width=2)
 
 
 def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float = 10.5,
-                   segments: int = 14) -> None:
+                   segments: int = 144) -> None:
     """A faint cylinder of vertical panels at the horizon.
 
     The operator's complaint was that it did not feel like being inside a space; props on a
@@ -173,12 +223,17 @@ def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float 
         a1 = 2.0 * math.pi * (i + 1) / segments
         p0 = (radius * math.sin(a0), 0.0, radius * math.cos(a0))
         p1 = (radius * math.sin(a1), 0.0, radius * math.cos(a1))
-        # brighter where the wall faces the view, dimmer at the sides: no lighting model needed
+        # Smooth and low contrast. At 14 segments (25.7 deg panels) each panel was a visibly
+        # different flat grey -- neighbours differed by up to 11/255 -- and because the
+        # brightness pattern is world-locked it slid sideways across the view as the head
+        # turned. That is what read as glitching. At 144 segments the largest step between
+        # neighbours is 1/255, so it is a gradient rather than a patchwork.
         facing = max(0.0, math.cos((a0 + a1) / 2.0))
-        shade = int(10 + 26 * facing)
-        quad = [cam.project((p0[0], bottom, p0[2]), eye), cam.project((p1[0], bottom, p1[2]), eye),
-                cam.project((p1[0], top, p1[2]), eye), cam.project((p0[0], top, p0[2]), eye)]
-        d.polygon(quad, fill=(shade, shade, min(255, shade + 4)))
+        shade = int(18 + 10 * facing)
+        quad = project_poly(cam, [(p0[0], bottom, p0[2]), (p1[0], bottom, p1[2]),
+                                  (p1[0], top, p1[2]), (p0[0], top, p0[2])], eye)
+        if quad:
+            d.polygon(quad, fill=(shade, shade, min(255, shade + 4)))
 
 
 def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, eye: int) -> None:
@@ -204,9 +259,15 @@ def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, e
         face_centre = np.array(centre, dtype=float) + n_world * half
         if float(np.dot(n_cam, cam.to_camera(face_centre, eye))) >= 0.0:
             continue
-        shade = 0.30 + 0.70 * max(0.0, float(np.dot(n_world, light)))
-        visible.append((n_world[2], [cam.project((x + vx, y + vy, z + vz), eye) for vx, vy, vz in verts],
-                        shaded(colour, shade, z)))
+        # Half the light is ambient. The key light is world-locked, so a directional-only
+        # model dropped every face of an object to 0.30 the moment you turned away from it,
+        # and a pastel at 30% is grey against a grey wall. That was the report of objects
+        # turning grey and vanishing when viewed from another angle.
+        shade = 0.50 + 0.50 * max(0.0, float(np.dot(n_world, light)))
+        pts = project_poly(cam, [(x + vx, y + vy, z + vz) for vx, vy, vz in verts], eye)
+        if pts is None:
+            continue
+        visible.append((n_world[2], pts, shaded(colour, shade, z)))
     for _, pts, c in sorted(visible, key=lambda it: it[0]):  # draw far faces first
         d.polygon(pts, fill=c)
 
@@ -214,8 +275,9 @@ def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, e
 def draw_reference_frame(d: ImageDraw.ImageDraw, cam: Camera, eye: int) -> None:
     """A thin outline at 2.5 m: zero-disparity anchor, and a scale reference."""
     hw, hh, z = 0.52, 0.26, 2.5
-    pts = [cam.project((dx, dy, z), eye) for dx, dy in ((-hw, hh), (hw, hh), (hw, -hh), (-hw, -hh))]
-    d.line(pts + [pts[0]], fill=(110, 110, 110), width=3)
+    pts = project_poly(cam, [(dx, dy, z) for dx, dy in ((-hw, hh), (hw, hh), (hw, -hh), (-hw, -hh))], eye)
+    if pts:
+        d.line(pts + [pts[0]], fill=(110, 110, 110), width=3)
 
 
 def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
