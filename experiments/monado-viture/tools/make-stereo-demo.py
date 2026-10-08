@@ -94,29 +94,60 @@ class Camera:
 NEAR = 0.12  # metres; see project_poly
 
 
-def project_poly(cam: Camera, pts, eye: int):
-    """Project a polygon, or None if any vertex is behind the near plane.
+def project_polys(cam: Camera, polys, eye: int):
+    """Project a batch of polygons, clipping each to the near plane.
 
-    This is the fix for the grey wash that looked like objects turning grey from some
-    angles. project() clamps z to 1e-3, so a vertex *behind* the camera divides by about
-    zero and lands millions of pixels away -- and Pillow then paints that face across the
-    whole frame. draw_ground explicitly draws the floor's *rear* bands and lines out to
-    z=-7.2 m, and the wall ring has rear segments, all of which flooded the frame on every
-    single frame with a flat grey. That flood is what appeared whenever the view held
-    nothing else, and it read as objects vanishing behind grey.
+    `polys` is a sequence of equal-length vertex lists. Returns a list of 2D polygons (or
+    None where a polygon is entirely behind the camera).
 
-    Dropping rather than clipping the polygon is enough here because nothing *visible*
-    straddles the plane: the floor is already split into explicit front and back quads,
-    wall segments that straddle it sit 90 deg off to the side of the view, and the nearest
-    object sits 1.4 m away.
+    Batched on purpose. The per-vertex numpy calls were the *entire* render cost -- floor
+    5.1 ms and wall 2.5 ms per eye, which is 15 ms per frame for both eyes and leaves no
+    room for 90 Hz. One (M,N,3) transform plus a vectorised single-plane clip brings that
+    to well under 1 ms.
+
+    Clipping rather than dropping is what makes the geometry genuinely 3D: a floor disc
+    always has part of its circle behind the viewer, so dropping any polygon with a vertex
+    behind the camera deleted the whole floor. Without any guard it is worse still --
+    Camera.project() clamps z, so a vertex behind the camera lands millions of pixels away
+    and Pillow paints that face across the frame, which was the flat grey wash.
     """
+    P = np.asarray(polys, dtype=float)                       # (M,N,3)
+    C = (P - cam.pos) @ cam.rot - cam.eye_offset * eye       # world -> camera space
+    m, n = C.shape[0], C.shape[1]
+    inside = C[:, :, 2] > NEAR
+    nxt = np.roll(np.arange(n), -1)
+    a, b = C, C[:, nxt]
+    denom = b[:, :, 2] - a[:, :, 2]
+    t_ = np.where(np.abs(denom) > 1e-12, (NEAR - a[:, :, 2]) / np.where(denom == 0.0, 1.0, denom), 0.0)
+    X = a + (b - a) * t_[:, :, None]
+    cross = inside != inside[:, nxt]
+
+    f = focal_px()
     out = []
-    for p in pts:
-        c = cam.to_camera(p, eye)
-        if c[2] <= NEAR:
-            return None
-        out.append(cam.project_cam(c))
+    for i in range(m):
+        if not inside[i].any():
+            out.append(None)
+            continue
+        if inside[i].all():
+            poly = C[i]
+        else:
+            pts = [v for j in range(n) for v in
+                   ((C[i, j],) if inside[i, j] else ()) + ((X[i, j],) if cross[i, j] else ())]
+            if len(pts) < 3:
+                out.append(None)
+                continue
+            poly = np.array(pts)
+        # Plain Python tuples, not a numpy array. Pillow's polygon() on this version draws
+        # a numpy-coordinate polygon as an *outline only* -- no fill, no error -- which is
+        # how every filled surface in the scene turned into thin lines and then nothing.
+        out.append([(float(EYE_W * 0.5 + f * v[0] / v[2]),
+                     float(EYE_H * 0.5 - f * v[1] / v[2])) for v in poly])
     return out
+
+
+def project_poly(cam: Camera, pts, eye: int):
+    """Single-polygon convenience wrapper around project_polys()."""
+    return project_polys(cam, [pts], eye)[0]
 
 
 def project_segment(cam: Camera, a, b, eye: int):
@@ -177,40 +208,57 @@ def shaded(colour, factor: float, z: float) -> tuple[int, int, int]:
 
 
 def draw_ground(d: ImageDraw.ImageDraw, cam: Camera, eye: int, r_near: float = 0.6, r_far: float = 14.0) -> None:
-    """A solid shaded floor with a few radial bands.
+    """A circular floor: concentric discs painted far to near, with radial spokes.
 
-    Thin receding grid lines moire badly at grazing angles, which the operator read as the
-    floor "warping". Filled quads with distance shading give a stable ground plane, and the
-    bands keep enough texture to read depth; a handful of radial lines add the perspective
-    without the aliasing storm.
+    Two things were wrong with the old one, both reported from inside the headset. It was
+    *square* -- the bands were axis-aligned annuli, so from the inside you saw their 45 deg
+    diagonals as a V-shaped cone opening away from you (the operator measured it at "like
+    40 degrees", which is a square's diagonal). And its radial "grid lines" were drawn two
+    *screen* pixels wide, constant width regardless of distance, so they arrived as thick
+    grey wedges near the camera.
+
+    A disc's shading can depend only on distance, so the band boundaries are arcs. Painting
+    a disc of radius r_i+eps in the line colour and then radius r_i in the floor colour, far
+    to near, leaves exactly one visible ring line per boundary: nearer discs are smaller and
+    cannot cover the outer rings. Spokes are quads of constant *world* width, so their
+    apparent width shrinks with distance like real geometry.
     """
-    bands = 9
-    for i in range(bands):
-        r0 = r_near * (r_far / r_near) ** (i / bands)
-        r1 = r_near * (r_far / r_near) ** ((i + 1) / bands)
-        shade = int(64 * (r_near / r0))
-        front = project_poly(cam, [(-r0, FLOOR_Y, r0), (r0, FLOOR_Y, r0),
-                                   (r1, FLOOR_Y, r1), (-r1, FLOOR_Y, r1)], eye)
-        back = project_poly(cam, [(-r0, FLOOR_Y, -r0), (r0, FLOOR_Y, -r0),
-                                  (r0, FLOOR_Y, -r1), (-r0, FLOOR_Y, -r1)], eye)
-        if front:
-            d.polygon(front, fill=(shade, shade, shade + 6))
-        if back:
-            d.polygon(back, fill=(max(0, shade - 10), max(0, shade - 10), shade))
-    for j in range(-4, 5):
-        x = j * 1.6
-        seg = project_segment(cam, (x, FLOOR_Y, r_near), (x, FLOOR_Y, r_far), eye)
-        if seg:
-            d.line(seg, fill=(28, 28, 34), width=2)
-    for j in range(-4, 5):
-        z = j * 1.8
-        seg = project_segment(cam, (-r_far, FLOOR_Y, z), (r_far, FLOOR_Y, z), eye)
-        if seg:
-            d.line(seg, fill=(28, 28, 34), width=2)
+    rings = 6
+    segments = 32
+
+    radii = [r_near * (r_far / r_near) ** (i / rings) for i in range(rings + 1)]
+    ang = [2 * math.pi * i / segments for i in range(segments)]
+    batch, fills = [], []
+    for r in reversed(radii):
+        # A gentle falloff, not 1/r. At 64*(r_near/r) the far floor came out (2,2,8) --
+        # drawn, and invisible: at a level gaze the only floor you can see is the far part,
+        # so the floor appeared to be missing. Rings and spokes carry the depth cue now;
+        # this shading only has to stop the ground reading as a black void.
+        shade = int(20 + 44 * (r_near / r) ** 0.4)
+        batch.append([(r * 1.006 * math.sin(a), FLOOR_Y, r * 1.006 * math.cos(a)) for a in ang])
+        fills.append((13, 13, 17))                    # the ring line, just outside r
+        batch.append([(r * math.sin(a), FLOOR_Y, r * math.cos(a)) for a in ang])
+        fills.append((shade, shade, min(255, shade + 6)))
+    for pts, fill in zip(project_polys(cam, batch, eye), fills):
+        if pts is not None:
+            d.polygon(pts, fill=fill)
+
+    spokes = 24
+    for k in range(spokes):
+        a = 2 * math.pi * k / spokes
+        w = 0.055 / 2.0                               # metres; constant world half-width
+        quad = project_poly(cam, [
+            ((r_near - w) * math.sin(a), FLOOR_Y, (r_near - w) * math.cos(a)),
+            ((r_near + w) * math.sin(a), FLOOR_Y, (r_near + w) * math.cos(a)),
+            ((r_far + w) * math.sin(a), FLOOR_Y, (r_far + w) * math.cos(a)),
+            ((r_far - w) * math.sin(a), FLOOR_Y, (r_far - w) * math.cos(a)),
+        ], eye)
+        if quad is not None:
+            d.polygon(quad, fill=(16, 16, 21))
 
 
 def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float = 10.5,
-                   segments: int = 144) -> None:
+                   segments: int = 48) -> None:
     """A faint cylinder of vertical panels at the horizon.
 
     The operator's complaint was that it did not feel like being inside a space; props on a
@@ -218,6 +266,7 @@ def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float 
     what makes rotation read as looking around a room rather than watching objects slide by.
     """
     top, bottom = 1.70, FLOOR_Y
+    quads, shades = [], []
     for i in range(segments):
         a0 = 2.0 * math.pi * i / segments
         a1 = 2.0 * math.pi * (i + 1) / segments
@@ -227,57 +276,76 @@ def draw_wall_ring(d: ImageDraw.ImageDraw, cam: Camera, eye: int, radius: float 
         # different flat grey -- neighbours differed by up to 11/255 -- and because the
         # brightness pattern is world-locked it slid sideways across the view as the head
         # turned. That is what read as glitching. At 144 segments the largest step between
-        # neighbours is 1/255, so it is a gradient rather than a patchwork.
+        # neighbours differ by <=2/255 at 48 segments: a gradient, not a patchwork.
         facing = max(0.0, math.cos((a0 + a1) / 2.0))
         shade = int(18 + 10 * facing)
-        quad = project_poly(cam, [(p0[0], bottom, p0[2]), (p1[0], bottom, p1[2]),
-                                  (p1[0], top, p1[2]), (p0[0], top, p0[2])], eye)
-        if quad:
-            d.polygon(quad, fill=(shade, shade, min(255, shade + 4)))
+        quads.append([(p0[0], bottom, p0[2]), (p1[0], bottom, p1[2]),
+                      (p1[0], top, p1[2]), (p0[0], top, p0[2])])
+        shades.append((shade, shade, min(255, shade + 4)))
+    for quad, fill in zip(project_polys(cam, quads, eye), shades):
+        if quad is not None:
+            d.polygon(quad, fill=fill)
 
 
-def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, eye: int) -> None:
-    """All six faces, culled by the face's own normal, lit per face."""
-    x, y, z = centre
-    lo, hi = -half, half
-    faces = (
-        ((0.0, 0.0, -1.0), ((lo, lo, -half), (hi, lo, -half), (hi, hi, -half), (lo, hi, -half))),
-        ((0.0, 0.0, 1.0), ((lo, lo, half), (hi, lo, half), (hi, hi, half), (lo, hi, half))),
-        ((1.0, 0.0, 0.0), ((half, lo, -half), (half, lo, half), (half, hi, half), (half, hi, -half))),
-        ((-1.0, 0.0, 0.0), ((-half, lo, -half), (-half, lo, half), (-half, hi, half), (-half, hi, -half))),
-        ((0.0, 1.0, 0.0), ((lo, half, -half), (hi, half, -half), (hi, half, half), (lo, half, half))),
-        ((0.0, -1.0, 0.0), ((lo, -half, -half), (hi, -half, -half), (hi, -half, half), (lo, -half, half))),
-    )
-    light = np.array([-0.45, 0.80, -0.40])
-    light = light / np.linalg.norm(light)
-    visible = []
-    for normal, verts in faces:
-        n_world = np.array(normal, dtype=float)
-        n_cam = cam.rot.T @ n_world
-        # The face is visible when its outward normal points back at the camera. The camera
-        # sits at the origin of camera space, so that is dot(n_cam, face_centre_cam) < 0.
-        face_centre = np.array(centre, dtype=float) + n_world * half
-        if float(np.dot(n_cam, cam.to_camera(face_centre, eye))) >= 0.0:
-            continue
-        # Half the light is ambient. The key light is world-locked, so a directional-only
-        # model dropped every face of an object to 0.30 the moment you turned away from it,
-        # and a pastel at 30% is grey against a grey wall. That was the report of objects
-        # turning grey and vanishing when viewed from another angle.
-        shade = 0.50 + 0.50 * max(0.0, float(np.dot(n_world, light)))
-        pts = project_poly(cam, [(x + vx, y + vy, z + vz) for vx, vy, vz in verts], eye)
-        if pts is None:
-            continue
-        visible.append((n_world[2], pts, shaded(colour, shade, z)))
-    for _, pts, c in sorted(visible, key=lambda it: it[0]):  # draw far faces first
-        d.polygon(pts, fill=c)
+# The six faces of a unit cube, as offsets from its centre, with their outward normals.
+# Module level so draw_box does not rebuild them 14 times per eye per frame.
+_FACE_OFFSETS = np.array([
+    [[(-1, -1, -1), (1, -1, -1), (1, 1, -1), (-1, 1, -1)]],
+    [[(-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)]],
+    [[(1, -1, -1), (1, -1, 1), (1, 1, 1), (1, 1, -1)]],
+    [[(-1, -1, -1), (-1, -1, 1), (-1, 1, 1), (-1, 1, -1)]],
+    [[(-1, 1, -1), (1, 1, -1), (1, 1, 1), (-1, 1, 1)]],
+    [[(-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)]],
+], dtype=float).reshape(6, 4, 3)
+_FACE_NORMALS = np.array([[0, 0, -1], [0, 0, 1], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]],
+                         dtype=float)
+_LIGHT = np.array([-0.45, 0.80, -0.40])
+_LIGHT = _LIGHT / np.linalg.norm(_LIGHT)
+
+
+def draw_box(d: ImageDraw.ImageDraw, cam: Camera, centre, half: float, colour, eye: int,
+             spin: float = 0.0) -> None:
+    """All six faces, culled by the face's own normal, lit per face, turned about its own
+    vertical axis.
+
+    The turn is what makes these read as solids. A cube viewed exactly face-on is a square,
+    and a square is indistinguishable from a flat card -- which is what "they don't look
+    like actual 3D objects" meant. Turning a few degrees a second guarantees two faces of
+    differing shade are always visible, and the shading changing as it turns is itself a
+    depth cue a static box cannot give.
+
+    Rotating, culling, shading and projecting all happen in single numpy passes: doing this
+    per vertex and per face in Python was 3 ms per eye, a third of the whole frame budget.
+    """
+    cs, sn = math.cos(spin), math.sin(spin)
+    rot_m = np.array([[cs, 0.0, sn], [0.0, 1.0, 0.0], [-sn, 0.0, cs]])
+    centre_v = np.asarray(centre, dtype=float)
+
+    world = _FACE_OFFSETS * half @ rot_m.T + centre_v          # (6,4,3)
+    n_world = _FACE_NORMALS @ rot_m.T                          # (6,3)
+
+    face_centres = centre_v + n_world * half                   # (6,3)
+    c_cam = (face_centres - cam.pos) @ cam.rot - cam.eye_offset * eye
+    n_cam = n_world @ cam.rot
+    shaded_faces = (n_cam * c_cam).sum(axis=1) < 0.0           # facing the camera
+
+    shades = 0.50 + 0.50 * np.maximum(0.0, n_world @ _LIGHT)
+    xs, ys, zs = centre_v
+    pending = [(float(n_world[i, 2]), shaded(colour, float(shades[i]), zs))
+               for i in range(6) if shaded_faces[i]]
+    faces = [world[i] for i in range(6) if shaded_faces[i]]
+    for (depth_key, fill), pts in zip(pending, project_polys(cam, faces, eye)):
+        if pts is not None:
+            d.polygon(pts, fill=fill)
 
 
 def draw_reference_frame(d: ImageDraw.ImageDraw, cam: Camera, eye: int) -> None:
     """A thin outline at 2.5 m: zero-disparity anchor, and a scale reference."""
     hw, hh, z = 0.52, 0.26, 2.5
     pts = project_poly(cam, [(dx, dy, z) for dx, dy in ((-hw, hh), (hw, hh), (hw, -hh), (-hw, -hh))], eye)
-    if pts:
-        d.line(pts + [pts[0]], fill=(110, 110, 110), width=3)
+    if pts is not None:
+        xy = [(float(x), float(y)) for x, y in pts]
+        d.line(xy + [xy[0]], fill=(110, 110, 110), width=3)
 
 
 def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
@@ -289,9 +357,12 @@ def render_eye(t: float, eye: int, cam: Camera) -> Image.Image:
     drawables = []
     for bearing, (near, far), height, half, colour, phase in OBJECTS:
         centre, r = object_state(t, bearing, near, far, height, phase)
-        drawables.append((r, centre, half, colour))
-    for _, centre, half, colour in sorted(drawables, key=lambda it: -it[0]):  # far first
-        draw_box(d, cam, centre, half, colour, eye)
+        drawables.append((r, centre, half, colour, phase))
+    for _, centre, half, colour, phase in sorted(drawables, key=lambda it: -it[0]):  # far first
+        # Different rate per object so they never sync up, and a different starting angle so
+        # none of them is face-on at t=0.
+        spin = math.radians(25.0 + 7.0 * phase + (8.0 + 13.0 * phase) * t)
+        draw_box(d, cam, centre, half, colour, eye, spin=spin)
     return img
 
 

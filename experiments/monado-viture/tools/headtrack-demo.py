@@ -52,6 +52,35 @@ def load_renderer():
     return mod
 
 
+def sample_ok(status, pose, pos, last_pose, last_pos) -> bool:
+    """Is this pose sample believable enough to show?
+
+    Two kinds are not, and the last good pose is held instead:
+
+      * the vendor marks it invalid (status != 0). The SDK emits zeroed poses while it
+        settles, and this loop used to apply every line verbatim -- so a single bad sample
+        snapped the view to the scene origin for one frame and then back. That is the
+        split-second jump reported from inside the headset.
+      * it would teleport the head. No real head turns 60 deg or moves a metre between
+        samples, so a jump that size is corrupt data rather than motion. This is also what
+        will keep a 6DoF pose honest once translation is live.
+    """
+    if status != 0:
+        return False
+    if pose == (0.0, 0.0, 0.0):
+        # The SDK's placeholder is exactly zero in all three channels. A real pose landing
+        # on exactly 0.000 in all three axes is a measure-zero event, so treating it as
+        # invalid costs one frame of held pose at worst; treating it as valid snaps the view
+        # to the reference direction. (Measured: status==0 with an all-zero pose was never
+        # observed -- the 120 placeholders in a startup capture were all status==1 -- so
+        # this is belt and braces for a second source, not the primary gate.)
+        return False
+    if last_pose is None:
+        return True
+    return (max(abs(a - b) for a, b in zip(pose, last_pose)) <= 60.0
+            and max(abs(a - b) for a, b in zip(pos, last_pos)) <= 1.0)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fps", type=int, default=90,
@@ -185,11 +214,15 @@ def main() -> int:
     # "for line in stdout" consumes every sample in order: the pipe accumulates a backlog
     # and the view falls steadily behind the head. That reads as drift, choppiness and
     # nausea, and no amount of FOV or axis fixing helps. Keep only the newest sample.
-    latest = {"pose": (0.0, 0.0, 0.0), "pos": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1}
+    latest = {"pose": (0.0, 0.0, 0.0), "pos": (0.0, 0.0, 0.0), "t": 0.0, "status": 1, "n": -1,
+              "dropped": 0}
     lock = threading.Lock()
     stream_t0 = [None]
 
     def reader():
+        last = [None]      # last pose we believed: (yaw, pitch, roll)
+        last_pos = [None]  # and its position, so a 6DoF teleport is caught too
+        # see sample_ok() for why samples get dropped
         for line in pose.stdout:
             if not line.startswith("{"):
                 continue
@@ -199,11 +232,29 @@ def main() -> int:
                 continue
             if stream_t0[0] is None:
                 stream_t0[0] = time.monotonic() - d.get("t", 0.0)
+            status = d.get("status", 1)
+            p = (d.get("yaw", 0.0), d.get("pitch", 0.0), d.get("roll", 0.0))
+            q = (d.get("px", 0.0), d.get("py", 0.0), d.get("pz", 0.0))
+            # Two kinds of sample are thrown away and the last good pose is held instead:
+            #   * the vendor marks it invalid (status != 0). The SDK emits zeroed poses while
+            #     it settles, and this loop used to apply every line verbatim -- so a single
+            #     bad sample snapped the view to the scene origin for one frame and then
+            #     back. That is the split-second jump that was reported ("turns my head to
+            #     the origin and jerks it back").
+            #   * it would teleport the head. No real head turns 60 deg or moves a metre
+            #     between samples, so a jump that size is corrupt data, not motion. This also
+            #     keeps 6DoF honest once translation is live.
+            if not sample_ok(status, p, q, last[0], last_pos[0]):
+                with lock:
+                    latest["dropped"] += 1
+                    latest["status"] = status
+                continue
+            last[0], last_pos[0] = p, q
             with lock:
-                latest["pose"] = (d.get("yaw", 0.0), d.get("pitch", 0.0), d.get("roll", 0.0))
-                latest["pos"] = (d.get("px", 0.0), d.get("py", 0.0), d.get("pz", 0.0))
+                latest["pose"] = p
+                latest["pos"] = q
                 latest["t"] = d.get("t", 0.0)
-                latest["status"] = d.get("status", 1)
+                latest["status"] = status
                 latest["n"] += 1
 
     def synthetic():
@@ -251,8 +302,16 @@ def main() -> int:
             if not a.no_recenter:
                 if recenter_request[0]:
                     recenter_request[0] = False
-                    ref = None
+                    # Re-reference to where the head is *now*. Dropping back into the warm-up
+                    # branch would force the pose to identity for the ~20 samples it takes to
+                    # collect a reference, i.e. show the unrotated scene for about half a
+                    # second -- a visible lurch for a function whose whole point is to be
+                    # invisible. latest[] only ever holds samples that passed sample_ok(), so
+                    # these values are a real pose even if a placeholder arrived just now.
+                    ref = (yaw, pitch, roll)
                     ref_acc.clear()
+                    print(f"re-referenced on yaw {ref[0]:+.1f} pitch {ref[1]:+.1f} roll {ref[2]:+.1f}",
+                          flush=True)
                 if ref is None:
                     # Reference the *settled* pose. The device emits placeholders (zeros)
                     # briefly after start regardless of source, so drop a warm-up window
@@ -311,7 +370,7 @@ def main() -> int:
             now = time.monotonic()
             if now - t_report > 2.0:
                 age_ms = 1000.0 * (time.monotonic() - (stream_t0[0] + pose_t)) if stream_t0[0] else float("nan")
-                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   yaw {last[0]:+7.1f}  "
+                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   yaw {last[0]:+7.1f}  "
                       f"pitch {last[1]:+7.1f}  roll {last[2]:+7.1f}", flush=True)
                 n, t_report = 0, now
     except (BrokenPipeError, KeyboardInterrupt):
