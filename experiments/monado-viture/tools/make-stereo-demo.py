@@ -334,6 +334,32 @@ def draw_ground(d: ImageDraw.ImageDraw, cam: Camera, eye: int, r_near: float = 0
             d.line([(float(x), float(y)) for x, y in pts] + [(float(pts[0][0]), float(pts[0][1]))],
                    fill=(46, 46, 56), width=1)
     # spokes
+    if WORLD == "room":
+        # Graduations along both axes, out to 6 m: a tick every 0.25 m, a long one every
+        # metre, drawn after the rings so they sit on top. This is the operator's ask -- an
+        # environment where you can *see* how far you moved -- and it is also what turns a VIO
+        # scale error (30 cm of movement rendering as a metre) from a vague "feels like a
+        # video game" into something measurable.
+        ticks, tick_fills = [], []
+        for axis in (0, 1):
+            for i in range(1, 25):
+                dist = i * 0.25
+                is_metre = (i % 4 == 0)
+                half = 0.34 if is_metre else 0.10
+                fill = (110, 116, 138) if is_metre else (58, 60, 74)
+                if axis == 0:
+                    quad = [(-half, FLOOR_Y, dist), (half, FLOOR_Y, dist),
+                            (half, FLOOR_Y, dist + 0.03), (-half, FLOOR_Y, dist + 0.03)]
+                else:
+                    quad = [(dist, FLOOR_Y, -half), (dist, FLOOR_Y, half),
+                            (dist + 0.03, FLOOR_Y, half), (dist + 0.03, FLOOR_Y, -half)]
+                ticks.append(quad)
+                ticks.append([(x, y, -z) for x, y, z in quad])
+                tick_fills += [fill, fill]
+        for pts, fill in zip(project_polys(cam, ticks, eye), tick_fills):
+            if pts is not None:
+                d.polygon(pts, fill=fill)
+
     for k in range(spokes):
         a = 2 * math.pi * k / spokes
         seg = project_segment(cam, (r_near * math.sin(a), FLOOR_Y, r_near * math.cos(a)),

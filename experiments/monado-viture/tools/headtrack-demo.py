@@ -52,36 +52,51 @@ def load_renderer():
     return mod
 
 
-def sample_ok(status, pose, pos, last_pose, last_pos, ok=1, consecutive_bad=0) -> bool:
+def _is_placeholder(quat, pos, tol=1e-9) -> bool:
+    """The SDK's placeholder: exactly identity rotation and exactly zero position.
+
+    Exactness matters. A real pose landing on exactly (1,0,0,0)/(0,0,0) in every component is
+    a measure-zero event, whereas the placeholders are exactly that -- measured: 120
+    consecutive in the first second of every session, and a burst of 83 whenever the glasses
+    are replugged. At startup they are indistinguishable from a real origin, which is why the
+    warm-up window exists; mid-session they can only be placeholders.
+    """
+    return (abs(quat[0] - 1.0) < tol and all(abs(v) < tol for v in quat[1:])
+            and all(abs(v) < tol for v in pos))
+
+
+def sample_ok(status, pose, pos, last_pose, last_pos, ok=1, consecutive_bad=0,
+              quat=None, last_quat=None) -> bool:
     """Is this pose sample believable enough to show?
 
-    The gate keys on the glitch, not on a flag. `status` cannot be used to reject samples:
-    in 3DoF the SDK emits placeholders (zeros) tagged status=1, but in 6DoF *every* sample
-    -- good ones included -- is status=1 (measured: 958/958 in a polled 6DoF capture). An
-    earlier version rejected on status != 0 and therefore threw away the entire 6DoF stream,
-    freezing the view at the warm-up origin with the drop counter climbing at the sample rate.
+    Two rules, and neither uses `status`. That flag cannot be used to filter samples: in 3DoF
+    the SDK emits placeholders tagged status=1, but in 6DoF *every* sample -- good ones
+    included -- is status=1 (measured 958/958). An earlier version keyed on it and threw away
+    the whole 6DoF stream.
 
-    What actually corrupts the view is a *one-off* jump: the SDK's placeholder zeros, when
-    the head is pointing well away from the origin, throw the view to a fixed direction for
-    a single frame. So:
-
-      * ok == 0 from the vendor is believed;
-      * a sample within 60 deg and 1 m of the last good one is accepted (no real head turns
-        60 deg or moves a metre between samples);
-      * a *sustained* different pose is real -- a VIO reset, or the coordinate frame moving
-        under us -- and is adopted after 20 consecutive samples;
-      * but a sustained pose is only adopted if status == 0, so a run of tagged placeholders
-        (120 in a row, measured) can never become the new reference.
+    1. An exact-identity placeholder, mid-session, is not a pose. Beware that "mid-session" is
+       load-bearing: after --reset the first real samples are also exactly identity, which is
+       what the warm-up window covers.
+    2. A sample farther than 180 deg / 2 m from the last accepted one is not believed on its
+       own -- but it *is* adopted after 5 consecutive samples, because a stalled stream or a
+       fast turn simply moves the head before the next sample arrives. The limit used to be
+       60 deg with a 20-sample, status-gated adoption path, and since 6DoF never reports
+       status=0 that path could never fire: the reference froze, and turning past ~60 deg from
+       it was rejected forever. That was the reported "it doesn't turn beyond a certain
+       degree ... like behind me".
     """
     if not ok:
         return False
     if last_pose is None:
         return True
-    off = (max(abs(a - b) for a, b in zip(pose, last_pose)) > 60.0
-           or max(abs(a - b) for a, b in zip(pos, last_pos)) > 1.0)
+    if quat is not None and last_quat is not None:
+        if _is_placeholder(quat, pos) and not _is_placeholder(last_quat, last_pos):
+            return False
+    off = (max(abs(a - b) for a, b in zip(pose, last_pose)) > 180.0
+           or max(abs(a - b) for a, b in zip(pos, last_pos)) > 2.0)
     if not off:
         return True
-    return consecutive_bad >= 20 and status == 0
+    return consecutive_bad >= 5
 
 
 def main() -> int:
@@ -99,6 +114,11 @@ def main() -> int:
                          "The room world is the default because the drift world cannot show "
                          "translation: its floor grid is symmetric and its objects move on "
                          "their own, which is indistinguishable from the viewer moving.")
+    ap.add_argument("--pos-gain", type=float, default=1.0,
+                    help="scale the 6DoF translation. Useful because the VIO's metric scale is "
+                         "estimated, so 'I moved 30 cm' can render as a metre. Compare against "
+                         "the floor graduations in --world room; a gain far from 1.0 is a scale "
+                         "error worth recording, not a preference.")
     ap.add_argument("--6dof", dest="sixdof", action="store_true",
                     help="use the device's 6DoF pose (Quaternion + translation) instead of "
                          "3DoF orientation only. 6DoF is the SDK default; --3dof overrode it.")
@@ -170,9 +190,25 @@ def main() -> int:
         pose_args.append("--src-cb")
     else:
         pose_args += ["--predict", str(a.predict)]
-    pose = subprocess.Popen(pose_args,
-                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, text=True)
-    assert pose.stdout is not None
+    pose = [None]   # holder: the watchdog below replaces the process, see start_pose()
+
+    def start_pose() -> None:
+        """(Re)start the pose source.
+
+        The device's VIO appears to need real motion to initialise: a session started while
+        the glasses sit still reports a constant identity pose forever, at full sample rate,
+        with nothing to suggest a problem. Restarting the source is what re-initialises it, so
+        the frozen-pose watchdog calls this until motion appears -- which means the operator no
+        longer has to start the demo at exactly the right moment wearing the glasses.
+        """
+        if pose[0] is not None:
+            try:
+                pose[0].kill()
+            except Exception:
+                pass
+        pose[0] = subprocess.Popen(pose_args, stdout=subprocess.PIPE,
+                                   stderr=subprocess.DEVNULL, env=env, text=True)
+        threading.Thread(target=reader_for, args=(pose[0],), daemon=True).start()
 
     encoder = player = None
     if not a.no_presenter:
@@ -238,12 +274,13 @@ def main() -> int:
     lock = threading.Lock()
     stream_t0 = [None]
 
-    def reader():
+    def reader_for(proc):
         last = [None]      # last pose we believed: (yaw, pitch, roll)
         last_pos = [None]  # and its position, so a 6DoF teleport is caught too
+        last_quat = [None]  # its quaternion: identity is how a placeholder is recognised
         streak = [0]       # consecutive rejects, used to tell a jump from a real move
         # see sample_ok() for why samples get dropped
-        for line in pose.stdout:
+        for line in (proc.stdout or []):
             if not line.startswith("{"):
                 continue
             try:
@@ -266,7 +303,8 @@ def main() -> int:
             #   * it would teleport the head. No real head turns 60 deg or moves a metre
             #     between samples, so a jump that size is corrupt data, not motion. This also
             #     keeps 6DoF honest once translation is live.
-            if not sample_ok(status, p, pos_now, last[0], last_pos[0], ok, streak[0]):
+            if not sample_ok(status, p, pos_now, last[0], last_pos[0], ok, streak[0],
+                             quat_now, last_quat[0]):
                 streak[0] += 1
                 with lock:
                     latest["dropped"] += 1
@@ -274,6 +312,7 @@ def main() -> int:
                 continue
             streak[0] = 0
             last[0], last_pos[0] = p, pos_now
+            last_quat[0] = quat_now
             with lock:
                 latest["pose"] = p
                 latest["pos"] = pos_now
@@ -306,9 +345,13 @@ def main() -> int:
         stream_t0[0] = time.monotonic()
         threading.Thread(target=synthetic, daemon=True).start()
     else:
-        threading.Thread(target=reader, daemon=True).start()
+        start_pose()
 
     render_errors = [0]
+    respawns = [0]
+    frozen_key = [None]
+    frozen_since = [None]
+    frozen_warned = [0.0]
     smoothed = [0.0, 0.0, 0.0, None]
     smoothed_q = [None, None, None, None]
     ref_q = [None]
@@ -386,9 +429,9 @@ def main() -> int:
             prev_t[0] = now_s
             alpha = 1.0 if a.smooth <= 0.0 else (1.0 - math.exp(-dt / a.smooth))
             if ref_pos[0] is not None and a.sixdof:
-                px0 = px0 - ref_pos[0][0]
-                py0 = py0 - ref_pos[0][1]
-                pz0 = pz0 - ref_pos[0][2]
+                px0 = (px0 - ref_pos[0][0]) * a.pos_gain
+                py0 = (py0 - ref_pos[0][1]) * a.pos_gain
+                pz0 = (pz0 - ref_pos[0][2]) * a.pos_gain
             cam = None
             if q_rel is not None:
                 if q_rel[0] < 0.0:                      # q and -q are the same rotation
@@ -420,6 +463,36 @@ def main() -> int:
                 cam = demo.Camera(pos=(px0, py0, pz0), yaw=yaw, pitch=pitch, roll=roll)
             # slow self-drift, so a stuttering display is distinguishable from a still scene
             now_mono = time.monotonic()
+            # A device whose VIO never initialised reports a constant identity pose while
+            # happily delivering samples at full rate, with nothing dropped: the view is
+            # simply frozen and every counter reads healthy. That is indistinguishable from
+            # "the app is broken" unless it says so, so it says so.
+            pose_key = (round(px0, 4), round(py0, 4), round(pz0, 4),
+                        round(last[0], 2), round(last[1], 2), round(last[2], 2))
+            if frozen_key[0] != pose_key:
+                frozen_key[0] = pose_key
+                frozen_since[0] = now_mono
+            elif frozen_since[0] is not None and now_mono - frozen_since[0] > 6.0:
+                frozen_since[0] = now_mono
+                if respawns[0] < 60:
+                    respawns[0] += 1
+                    print(f"  pose unchanged while samples keep arriving: the VIO is not tracking "
+                          f"(it needs motion to initialise, so a session begun with the glasses "
+                          f"still never starts). Re-initialising the pose source "
+                          f"(attempt {respawns[0]}).", flush=True)
+                    with lock:
+                        latest["quat"] = None
+                    # the new stream has its own time base; without this the reported pose age
+                    # counts from the old one and reads as tens of seconds after a respawn
+                    stream_t0[0] = None
+                    ref = None
+                    ref_q[0] = None
+                    ref_pos[0] = None
+                    ref_acc.clear()
+                    warmup[0] = 0
+                    smoothed[3] = None
+                    smoothed_q[:] = [None, None, None, None]
+                    start_pose()
             phase = (now_mono * 0.2) % 1.0
             try:
                 frame = demo.render_frame(phase, cam, now_mono).tobytes()
@@ -455,7 +528,8 @@ def main() -> int:
     except (BrokenPipeError, KeyboardInterrupt):
         pass
     finally:
-        pose.terminate()
+        if pose[0] is not None:
+            pose[0].terminate()
         if encoder is not None:
             try:
                 encoder.stdin.close()
