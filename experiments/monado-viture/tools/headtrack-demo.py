@@ -114,6 +114,15 @@ def main() -> int:
                          "The room world is the default because the drift world cannot show "
                          "translation: its floor grid is symmetric and its objects move on "
                          "their own, which is indistinguishable from the viewer moving.")
+    ap.add_argument("--record", metavar="FILE",
+                    help="tee the raw pose stream to FILE while running, so a session can be "
+                         "replayed later. This is how the test corpus gets made.")
+    ap.add_argument("--pose-file", metavar="FILE",
+                    help="replay a recorded pose stream instead of opening the device. Makes "
+                         "the pose path deterministic and testable with no hardware: same input, "
+                         "same frames. It proves the *consumer* (gate, quaternion conversion, "
+                         "reference grounding), never the device -- the VIO's own accuracy needs "
+                         "physical known-answer tests (see docs/verification.md).")
     ap.add_argument("--pos-gain", type=float, default=1.0,
                     help="scale the 6DoF translation. Useful because the VIO's metric scale is "
                          "estimated, so 'I moved 30 cm' can render as a metre. Compare against "
@@ -191,6 +200,8 @@ def main() -> int:
     else:
         pose_args += ["--predict", str(a.predict)]
     pose = [None]   # holder: the watchdog below replaces the process, see start_pose()
+    record_handle = [open(a.record, "w", encoding="utf-8") if a.record else None]
+    source_notes = [0]
 
     def start_pose() -> None:
         """(Re)start the pose source.
@@ -206,6 +217,14 @@ def main() -> int:
                 pose[0].kill()
             except Exception:
                 pass
+        if a.pose_file:
+            # Replay: the reader iterates whatever object it is handed, so a file handle and
+            # a subprocess pipe are the same thing to it. When the file ends the watchdog sees
+            # a frozen pose and restarts this, which is what makes replay loop.
+            pose[0] = None
+            handle = open(a.pose_file, "r", encoding="utf-8")
+            threading.Thread(target=reader_for, args=(handle,), daemon=True).start()
+            return
         pose[0] = subprocess.Popen(pose_args, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL, env=env, text=True)
         threading.Thread(target=reader_for, args=(pose[0],), daemon=True).start()
@@ -280,9 +299,20 @@ def main() -> int:
         last_quat = [None]  # its quaternion: identity is how a placeholder is recognised
         streak = [0]       # consecutive rejects, used to tell a jump from a real move
         # see sample_ok() for why samples get dropped
-        for line in (proc.stdout or []):
+        stream = proc.stdout if hasattr(proc, "stdout") else proc
+        for line in (stream or []):
             if not line.startswith("{"):
+                # The pose tool reports its bring-up on stdout as plain text: which DoF type it
+                # set, whether the stereo camera callbacks registered, and any protocol error.
+                # All of it was being discarded, so a dead VIO was invisible.
+                text = line.strip()
+                if text and source_notes[0] < 12:
+                    source_notes[0] += 1
+                    print(f"  [pose source] {text[:160]}", flush=True)
                 continue
+            if record_handle[0] is not None:
+                record_handle[0].write(line)
+                record_handle[0].flush()
             try:
                 d = json.loads(line)
             except Exception:
