@@ -16,3 +16,10 @@ SUBSYSTEM=="usb", KERNEL=="hiddev[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", 
 SUBSYSTEM=="tty", KERNEL=="ttyACM[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="hidraw", KERNEL=="hidraw[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="video4linux", KERNEL=="video[0-9]*", ATTRS{idVendor}=="35ca", MODE="0660", TAG+="uaccess"
+
+# The Carina stereo cameras are a standard UVC device (0c45:636b). Two rules are needed or
+# the VIO never gets an image and get_gl_pose_carina returns identity+unstable forever:
+#   * the kernel's uvcvideo driver binds them the instant they enumerate, so unbind ours;
+#   * the raw USB node must be writable by the seat user, or libusb cannot claim it.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="636b", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="636b", DRIVER=="uvcvideo", RUN+="/bin/sh -c 'echo -n %k > /sys/bus/usb/drivers/uvcvideo/unbind'"

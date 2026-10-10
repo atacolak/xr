@@ -28,6 +28,7 @@
 #include <time.h>
 
 #include "viture_device_carina.h"
+#include "viture_camera_provider.h"
 #include "viture_glasses_provider.h"
 #include "viture_protocol_public.h"
 #include "viture_result.h"
@@ -54,6 +55,7 @@ struct options
 	bool native_probe;
 	bool pose_cb;
 	bool auto_exposure;
+	bool camera_provider;
 	bool src_cb;
 	bool flip_xy;
 	const char *cache;
@@ -181,6 +183,25 @@ self_test_axes(void)
 	return bad == 0 ? 0 : 1;
 }
 
+/* ---- the standalone camera provider's stream ----
+ * Separate USB interface and separate API from xr_device_provider: the device provider's
+ * camera callback belongs to the VIO, while this stream is opened explicitly. Without it the
+ * video stream is never brought up at all ("init open_vst_str: off"), no frames reach the VIO,
+ * and every pose comes back identity+unstable forever. */
+static unsigned long long g_stream_frames;
+static int g_stream_w, g_stream_h;
+
+static void
+stream_frame_cb(const XRCameraFrame *f, void *user)
+{
+	(void)user;
+	if (g_stream_frames == 0) {
+		g_stream_w = (int)f->width;
+		g_stream_h = (int)f->height;
+	}
+	__atomic_add_fetch(&g_stream_frames, 1, __ATOMIC_RELAXED);
+}
+
 /* ---- stereo camera frames: the Carina VIO's input ---- */
 static unsigned long long g_cam_frames;
 static int g_cam_w;
@@ -273,6 +294,10 @@ main(int argc, char **argv)
 			o.pose_cb = true;
 		} else if (strcmp(a, "--auto-exposure") == 0) {
 			o.auto_exposure = true;
+		} else if (strcmp(a, "--camera-provider") == 0) {
+			/* Open the stereo camera stream directly. Diagnostic only: the VIO opens the
+			 * camera through the device provider, and holding it here starves the VIO. */
+			o.camera_provider = true;
 		} else if (strcmp(a, "--cache") == 0 && i + 1 < argc) {
 			o.cache = argv[++i];
 		} else if (strcmp(a, "--pose-cb") == 0) {
@@ -334,6 +359,24 @@ main(int argc, char **argv)
 	}
 
 	XRDeviceProviderHandle h = xr_device_provider_create(product_id);
+
+	/* Bring up the stereo camera stream before the device provider starts: the VIO needs
+	 * images, and this is the API that opens them. */
+	XRCameraProviderHandle cam = NULL;
+	{
+		const int cv = o.camera_provider ? xr_camera_provider_get_camera_vid(product_id) : 0;
+		const int cp = xr_camera_provider_get_camera_pid(product_id);
+		printf("camera provider: vid=0x%04X pid=0x%04X\n", cv, cp);
+		if (o.camera_provider && cv != 0 && cp != 0) {
+			cam = xr_camera_provider_create(cv, cp);
+			printf("camera_provider_create -> %s\n", cam ? "ok" : "NULL");
+			if (cam != NULL) {
+				const int sr = xr_camera_provider_start(cam, stream_frame_cb, NULL);
+				printf("camera_provider_start -> %d (is_streaming=%d)\n", sr,
+				       xr_camera_provider_is_streaming(cam));
+			}
+		}
+	}
 	if (h == NULL) {
 		fprintf(stderr, "xr_device_provider_create failed for pid 0x%04X\n", product_id);
 		return 1;
@@ -416,7 +459,11 @@ main(int argc, char **argv)
 		}
 
 		if (o.get_mode) {
-			xr_device_provider_stop(h);
+			if (cam != NULL) {
+		xr_camera_provider_stop(cam);
+		xr_camera_provider_destroy(cam);
+	}
+	xr_device_provider_stop(h);
 			xr_device_provider_shutdown(h);
 			xr_device_provider_destroy(h);
 			return 0;
@@ -594,6 +641,11 @@ main(int argc, char **argv)
 		printf("vsync callbacks: %llu   imu callbacks: %llu\n",
 		       (unsigned long long)__atomic_load_n(&g_vsync_count, __ATOMIC_RELAXED),
 		       (unsigned long long)__atomic_load_n(&g_imu_count, __ATOMIC_RELAXED));
+		printf("camera provider frames: %llu", (unsigned long long)g_stream_frames);
+		if (g_stream_frames > 0) {
+			printf(" (%dx%d)", g_stream_w, g_stream_h);
+		}
+		printf("\n");
 		printf("stereo camera frames delivered: %llu", frames);
 		if (frames > 0) {
 			printf(" (%dx%d, %.1f fps)\n", cw, ch, (double)frames / (elapsed > 0.0 ? elapsed : 1.0));
