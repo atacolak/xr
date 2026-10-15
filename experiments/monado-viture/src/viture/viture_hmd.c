@@ -117,6 +117,36 @@ DEBUG_GET_ONCE_BOOL_OPTION(viture_no_sdk, "VITURE_NO_SDK", false)
 DEBUG_GET_ONCE_FLOAT_OPTION(viture_ipd_meters, "VITURE_IPD_METERS", 0.064f)
 DEBUG_GET_ONCE_FLOAT_OPTION(viture_fov_h_deg, "VITURE_FOV_H_DEG", 42.0f)
 DEBUG_GET_ONCE_FLOAT_OPTION(viture_image_distance_m, "VITURE_IMAGE_DISTANCE_M", 3.0f)
+/*
+ * Carina callbacks, registered before start().
+ *
+ * The VIO engine captures the camera callback pointer at start time and solves from the
+ * images delivered to it. With no registration the engine has no input at all and
+ * get_gl_pose_carina returns an identity pose forever -- which is exactly what this driver
+ * did, and why only orientation ever appeared to work here. The driver does not need the
+ * pixels, it needs the engine to have them, so the callback only counts.
+ *
+ * The count is also the evidence used for the TRACKED bits: the SDK marks 6DoF poses
+ * "unstable" permanently (measured 0/7198 stable over a still minute), so gating TRACKED on
+ * that flag means a working 6DoF pose is never advertised as tracked, and OpenXR apps
+ * rightly ignore it. Frames arriving is the thing we actually know.
+ */
+static unsigned long long g_carina_camera_frames;
+
+static void
+viture_carina_camera_cb(char *l0, char *r0, char *l1, char *r1, double ts, int w, int h)
+{
+	(void)l0; (void)r0; (void)l1; (void)r1; (void)ts; (void)w; (void)h;
+	__atomic_add_fetch(&g_carina_camera_frames, 1, __ATOMIC_RELAXED);
+}
+
+static void
+viture_carina_pose_cb(float *pose, double ts) { (void)pose; (void)ts; }
+static void
+viture_carina_vsync_cb(double ts) { (void)ts; }
+static void
+viture_carina_imu_cb(float *imu, double ts) { (void)imu; (void)ts; }
+
 DEBUG_GET_ONCE_FLOAT_OPTION(viture_position_scale, "VITURE_POSITION_SCALE", 1.0f)
 DEBUG_GET_ONCE_OPTION(viture_pose_axes, "VITURE_POSE_AXES", NULL)
 DEBUG_GET_ONCE_OPTION(viture_cache_dir, "VITURE_CACHE_DIR", NULL)
@@ -254,6 +284,13 @@ viture_poll_pose_locked(struct viture_hmd *hmd, double predict_s, struct xrt_spa
 	}
 
 	const bool stable = status == VITURE_POSE_STATUS_STABLE;
+	const unsigned long long cam_frames = __atomic_load_n(&g_carina_camera_frames, __ATOMIC_RELAXED);
+	/*
+	 * "Tracked" means we have evidence the pose is being solved from real images, not that a
+	 * status flag says so. 6DoF never reports stable, so keying on it alone would advertise
+	 * every working 6DoF pose as untracked.
+	 */
+	const bool tracked = stable || cam_frames > 0;
 	hmd->last_status = status;
 	hmd->pose_samples++;
 	if (!stable) {
@@ -266,7 +303,14 @@ viture_poll_pose_locked(struct viture_hmd *hmd, double predict_s, struct xrt_spa
 	}
 	hmd->last_sample_ns = now;
 
-	viture_carina_to_space_relation(pose, hmd->cfg.sixdof, stable, hmd->cfg.axes, hmd->cfg.position_scale, out);
+	if (hmd->cfg.sixdof && hmd->pose_samples % 600 == 0) {
+		VITURE_INFO(hmd, "6DoF: %llu camera frames, %llu samples, %llu unstable, tracked=%s",
+		            cam_frames, (unsigned long long)hmd->pose_samples,
+		            (unsigned long long)hmd->unstable_samples, tracked ? "yes" : "no");
+	}
+
+	viture_carina_to_space_relation(pose, hmd->cfg.sixdof, tracked, hmd->cfg.axes,
+	                                hmd->cfg.position_scale, out);
 	return true;
 }
 
@@ -441,9 +485,26 @@ viture_sdk_start(struct viture_hmd *hmd)
 		return false;
 	}
 
+	/* Must precede start(): the VIO engine captures the callback pointer at that moment. */
+	const int cb_ret = xr_device_provider_register_callbacks_carina(
+	    hmd->provider, viture_carina_pose_cb, viture_carina_vsync_cb, viture_carina_imu_cb,
+	    viture_carina_camera_cb);
+	if (cb_ret != VITURE_GLASSES_SUCCESS) {
+		VITURE_ERROR(hmd, "register_callbacks_carina failed: %d (the VIO will have no images)", cb_ret);
+		return false;
+	}
+
 	if (xr_device_provider_start(hmd->provider) != VITURE_GLASSES_SUCCESS) {
 		VITURE_ERROR(hmd, "start failed");
 		return false;
+	}
+
+	/* The vendor's own app and demo call this after start; without it the cameras can stay dark. */
+	const int ae_ret = xr_device_provider_set_auto_exposure_carina(hmd->provider);
+	if (ae_ret != VITURE_GLASSES_SUCCESS) {
+		VITURE_WARN(hmd, "set_auto_exposure_carina failed: %d (cameras may stay dark)", ae_ret);
+	} else if (hmd->cfg.sixdof) {
+		VITURE_INFO(hmd, "carina callbacks registered before start, auto exposure set after it");
 	}
 
 	VITURE_INFO(hmd, "vendor SDK %s ready, %s, device_type=%d", GetVersionString(),
@@ -557,9 +618,10 @@ viture_hmd_create(int product_id, const struct viture_config *cfg)
 
 	os_mutex_init(&hmd->mutex);
 
-	// Identity pose from the start so a failed first poll is still sane.
-	viture_carina_to_space_relation((const float[]){0, 0, 0, 1, 0, 0, 0}, config.sixdof, true, config.axes,
-	                                config.position_scale, &hmd->last_relation);
+	// Identity pose from the start so a failed first poll is still sane. Not "tracked":
+	// nothing has been tracked yet, and advertising otherwise is a claim we cannot back.
+	viture_carina_to_space_relation((const float[]){0, 0, 0, 1, 0, 0, 0}, config.sixdof, false,
+	                                config.axes, config.position_scale, &hmd->last_relation);
 
 	char market[64] = {0};
 	if (viture_market_name(product_id, market, sizeof(market))) {
