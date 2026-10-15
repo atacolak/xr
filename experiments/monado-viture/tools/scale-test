@@ -129,10 +129,15 @@ def main() -> int:
         print(f"no {TOOL} (build it: tools/build-pose-dump.sh)", file=sys.stderr)
         return 1
 
-    print("Scale test. ONE pose session, split at the moment you move the device.\n")
-    print("  the origin is set when the SDK session starts, so a displacement measured across")
-    print("  two runs is always zero. Hence: leave this running, move the glasses when asked.\n")
-    print("  point the glasses at something lit and textured, and leave them alone otherwise.\n")
+    print("Scale test. One command, three steps:\n")
+    print("  1. leave the glasses still, pointed at a lit and textured scene")
+    print("  2. when asked, move them a known distance and press enter")
+    print("  3. read the scale off the end\n")
+    print("  It keeps one pose session running throughout, because the device sets its origin")
+    print("  when the SDK session starts -- a distance measured across two runs is always zero.\n")
+    print("  The scene matters more than anything else here. Pointed at a blank or dark view the")
+    print("  VIO never locks, it reports no translation at all, and no distance you move will show")
+    print("  up. Point them at the room, or at the lit monitor from a metre away.\n")
 
     # One process has to outlive: settle + the operator handling it + the moved window.
     total = a.settle + 120.0 + a.moved_seconds
@@ -152,16 +157,14 @@ def main() -> int:
 
     dist = a.distance
     if dist is None and not a.skip_prompt:
-        answer = input(f"  displace the glasses by a known distance, then enter the metres "
-                       f"[default 0.100]: ").strip()
+        answer = input("  how far will you move them, in metres? [0.100] ").strip()
         try:
             dist = float(answer) if answer else 0.100
         except ValueError:
             dist = 0.100
-    move_from = stream.last_t
     if not a.skip_prompt:
-        print("\n  MOVE IT NOW. Keep the orientation the same (forward/back along the tape is fine).")
-        input("  press enter once it is in place and still: ")
+        print(f"\n  MOVE THE GLASSES NOW, {dist * 100:.0f} cm along the tape, same orientation.")
+        input("  press enter once they are in place and you have let go: ")
     moved_from = stream.last_t
 
     print(f"  sampling {a.moved_seconds:.0f} s after the move ...", flush=True)
@@ -188,12 +191,17 @@ def main() -> int:
     print(f"  orientation drift between phases: {drift:.2f} deg")
     print(f"  settled motionless wander (3D):  {floor:.4f} m   (same session, so comparable)")
 
-    if a.json_lines:
-        with open(a.json_lines, "a", encoding="utf-8") as fh:
-            for s in still:
-                fh.write(json.dumps({"phase": "still", **s}) + "\n")
-            for s in moved:
-                fh.write(json.dumps({"phase": "moved", **s}) + "\n")
+    # Save every run, refused or not: the two refused bench runs are what showed the VIO was not
+    # tracking, and they were only recoverable from a terminal scrollback.
+    out_path = pathlib.Path(a.json_lines) if a.json_lines else (
+        ROOT / "tests" / "pose-corpus" / f"scale-{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "a", encoding="utf-8") as fh:
+        for s in still:
+            fh.write(json.dumps({"phase": "still", **s}) + "\n")
+        for s in moved:
+            fh.write(json.dumps({"phase": "moved", **s}) + "\n")
+    print(f"\n  samples saved to {out_path.relative_to(ROOT)}")
 
     if drift > 5.0:
         print("\n  REFUSING A SCALE: the orientation moved more than 5 deg between phases, so this is")
