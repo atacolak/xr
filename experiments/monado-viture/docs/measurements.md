@@ -131,6 +131,24 @@ Verified without any hardware:
 
 ### Procedure: translation unit (`VITURE_POSITION_SCALE`)
 
+Run `tools/scale-test`, which automates the four steps below and refuses to divide when the
+movement is not clear of the VIO's motionless noise floor:
+
+```sh
+tools/scale-test                      # 6 s still, prompt for the displacement, 6 s moved
+tools/scale-test --distance 0.30      # if the distance is known up front
+```
+
+Two things it does differently from reading the numbers by hand:
+
+* the scale comes from the **magnitude** of the delta, not from one axis. The SDK's position
+  axes are undocumented, so assuming which one is "forward" would bake a guess into the
+  measurement; the per-axis breakdown is printed instead so the mapping can be read off.
+* it reports the orientation drift between phases and refuses a scale above 5 deg, because a
+  yaw change makes it a rotation measurement, not a translation one.
+
+Manual version of the same thing:
+
 1. `tools/viture-pose-dump --seconds 20 --json > still.json` — do not move.
    The position spread over the run is the VIO's noise floor.
 2. Repeat while sliding the head a measured **10.0 cm** to the right, slowly.
