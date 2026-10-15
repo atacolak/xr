@@ -1,0 +1,9 @@
+# Sensor-session captures (`tools/viture-pose-dump --capture`) belong here, named
+# capture-<timestamp>/, and are NOT committed: each is ~14 MB per second of 640x480 stereo
+# (4 planes x 307200 bytes x 25 fps), so a session is tens of megabytes of raw sensor data
+# that is reproducible on demand and useless in git history.
+#
+# The scale-*.jsonl files in this directory ARE committed: they are small, they are the
+# evidence behind VITURE_POSITION_SCALE, and a refused run is as informative as an accepted
+# one (the two refused bench runs of 2026-10-15 are what showed the VIO was not tracking).
+capture-*/
