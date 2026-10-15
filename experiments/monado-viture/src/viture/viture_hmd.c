@@ -148,6 +148,7 @@ static void
 viture_carina_imu_cb(float *imu, double ts) { (void)imu; (void)ts; }
 
 DEBUG_GET_ONCE_FLOAT_OPTION(viture_position_scale, "VITURE_POSITION_SCALE", 1.0f)
+DEBUG_GET_ONCE_BOOL_OPTION(viture_flip_forward, "VITURE_FLIP_FORWARD", true)
 DEBUG_GET_ONCE_OPTION(viture_pose_axes, "VITURE_POSE_AXES", NULL)
 DEBUG_GET_ONCE_OPTION(viture_cache_dir, "VITURE_CACHE_DIR", NULL)
 
@@ -177,6 +178,7 @@ viture_config_defaults(struct viture_config *cfg)
 	cfg->fov_h_deg = 42.0f;
 	cfg->image_distance_m = 3.0f;
 	cfg->position_scale = 1.0f;
+	cfg->flip_forward = true;
 	cfg->cache_dir = NULL;
 	cfg->axes = VITURE_AXES_IDENTITY;
 	cfg->no_sdk = false;
@@ -230,6 +232,7 @@ viture_config_from_env(struct viture_config *cfg)
 	cfg->fov_h_deg = debug_get_float_option_viture_fov_h_deg();
 	cfg->image_distance_m = debug_get_float_option_viture_image_distance_m();
 	cfg->position_scale = debug_get_float_option_viture_position_scale();
+	cfg->flip_forward = debug_get_bool_option_viture_flip_forward();
 	cfg->axes = viture_axes_from_string(debug_get_option_viture_pose_axes());
 	cfg->cache_dir = viture_default_cache_dir();
 }
@@ -307,6 +310,18 @@ viture_poll_pose_locked(struct viture_hmd *hmd, double predict_s, struct xrt_spa
 		VITURE_INFO(hmd, "6DoF: %llu camera frames, %llu samples, %llu unstable, tracked=%s",
 		            cam_frames, (unsigned long long)hmd->pose_samples,
 		            (unsigned long long)hmd->unstable_samples, tracked ? "yes" : "no");
+	}
+
+	/*
+	 * The forward component of the reported translation is inverted relative to the
+	 * orientation the same pose carries: walking forward moved the viewer backward, reported
+	 * from inside the headset and visible in both this driver and the standalone demo. The
+	 * orientation is correct (its direction was verified on hardware), so only the forward
+	 * translation is negated here, not the whole vector -- negating all three would invert
+	 * left/right as well. VITURE_FLIP_FORWARD=0 restores the raw SDK value for measurement.
+	 */
+	if (hmd->cfg.flip_forward) {
+		pose[VITURE_POSE_PZ] = -pose[VITURE_POSE_PZ];
 	}
 
 	viture_carina_to_space_relation(pose, hmd->cfg.sixdof, tracked, hmd->cfg.axes,

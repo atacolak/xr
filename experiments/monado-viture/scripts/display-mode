@@ -50,22 +50,9 @@ esac
 command -v xrandr >/dev/null || { echo "no xrandr" >&2; exit 1; }
 timeout 8 xrandr --query >/dev/null 2>&1 || { echo "X on $DISPLAY did not answer within 8 s (wedged?)" >&2; exit 1; }
 
-# Pick the output that actually offers the target timing, not the first connected one.
-# "First connected" silently chose the desktop monitor after a reboot brought it back
-# (DP-0), pointed the *glasses'* mode at it, and then refused -- a topology accident.
-if [ -n "${VITURE_OUTPUT:-}" ]; then
-	OUT="$VITURE_OUTPUT"
-else
-	OUT=$(timeout 8 xrandr --query | awk -v m="$X_MODE" '
-		/^[A-Za-z0-9_.-]+ connected/ { cur = $1 }
-		cur != "" && $1 == m && $0 ~ /[0-9]+\.[0-9]+/ { print cur; exit }')
-fi
-[ -n "$OUT" ] || {
-	echo "no connected output offers $X_MODE; the sink is probably not in $WANT mode yet." >&2
-	echo "set VITURE_OUTPUT=<name> to force one." >&2
-	exit 1
-}
-echo "output=$OUT  target=$MODE_NAME  (X wants $X_MODE@$X_RATE)"
+# The output is chosen *after* the device mode is set, by whichever output offers the
+# timing. Choosing before is what made this script point the glasses' timing at the desktop
+# monitor: on a fresh connection the sink is in 2D, so nothing offers 3840x1200 yet.
 
 if ! lsusb -d 35ca: >/dev/null 2>&1; then
 	echo "glasses not on the USB bus; attach them first" >&2
@@ -81,32 +68,44 @@ LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 
 # 2. wait for X to be offered the timing (the sink re-presents its mode set)
 echo "--- waiting for X to offer $X_MODE"
-offered=0
+offered=""
 for _ in $(seq 1 20); do
-	if timeout 8 xrandr --query 2>/dev/null | sed -n "/^${OUT}/,/^[A-Z]/p" |
-		grep -qE "^[[:space:]]+${X_MODE}[[:space:]]"; then
-		offered=1
-		break
-	fi
+	offered=$(timeout 8 xrandr --query 2>/dev/null | awk -v m="$X_MODE" '
+		/^[A-Za-z0-9_.-]+ connected/ { cur = $1 }
+		cur != "" && $1 == m && $0 ~ /[0-9]+\.[0-9]+/ { print cur; exit }')
+	[ -n "$offered" ] && break
 	sleep 1
 done
-if [ "$offered" != 1 ]; then
+if [ -z "$offered" ]; then
 	echo "    X never offered $X_MODE. Sink mode and X are out of step; a replug of the" >&2
 	echo "    glasses makes X re-read the sink. Nothing changed." >&2
 	exit 1
 fi
+OUT="${VITURE_OUTPUT:-$offered}"
+echo "output=$OUT  target=$MODE_NAME  (X wants $X_MODE@$X_RATE)"
 
 # 3. point X at it
 echo "--- setting $OUT to $X_MODE@$X_RATE"
 # Bounded on purpose: with the GPU display engine wedged the modeset ioctl *blocks*
 # instead of failing, and an unbounded call hung an X server on 2026-10-04.
-if ! timeout 20 xrandr --output "$OUT" --mode "$X_MODE" --rate "$X_RATE" --primary --pos 0x0; then
+# Not --primary: the glasses are a presentation surface, not the desktop. Making them
+# primary put them at the origin together with the monitor, so the two overlapped and the
+# desktop showed a clipped mixture of both.
+if ! timeout 20 xrandr --output "$OUT" --mode "$X_MODE" --rate "$X_RATE" --pos 0x0; then
 	echo "    xrandr did not complete (hung or refused)." >&2
 	echo "    Nothing in RandR will fix a wedged display engine: restart the display" >&2
 	echo "    stack (systemctl restart gdm, or reboot) and run this again." >&2
 	exit 1
 fi
 sleep 2
+# The glasses hold the origin so an XR window placed at 0,0 lands on them alone; the desktop
+# primary is pushed to their right. Non-overlapping is the whole point.
+PRIMARY=$(timeout 8 xrandr --query | awk '/ primary/{print $1; exit}')
+if [ -n "$PRIMARY" ] && [ "$PRIMARY" != "$OUT" ]; then
+	GLW=$(timeout 8 xrandr --query | awk -v o="$OUT" '$1==o {split($3,a,"x"); print a[1]}')
+	timeout 10 xrandr --output "$OUT" --pos 0x0 --output "$PRIMARY" --pos "${GLW:-3840}x0" && \
+		echo "--- placed $OUT at 0x0, $PRIMARY to its right (no overlap)"
+fi
 timeout 8 xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | head -4
 timeout 8 xrandr --query --current | head -1
 timeout 8 xrandr --listmonitors

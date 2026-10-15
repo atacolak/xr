@@ -62,6 +62,7 @@ struct viture_config
 	 * component; see docs/measurements.md for the calibration procedure.
 	 */
 	float position_scale;
+	bool flip_forward;
 
 	//! Where the vendor SDK may cache calibration data.
 	const char *cache_dir;

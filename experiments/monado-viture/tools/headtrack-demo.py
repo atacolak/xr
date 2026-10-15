@@ -154,6 +154,10 @@ def main() -> int:
                          "diagonal, which is ~44.9 deg horizontal on an 8:5 panel. This "
                          "must match the optics or head motion feels too fast/slow, "
                          "because the panel stretches the render across the real FOV.")
+    ap.add_argument("--no-flip-forward", dest="flip_forward", action="store_false",
+                    help="do not negate the forward component of the 6DoF translation. The "
+                         "negation is the default because the SDK reports forward inverted "
+                         "relative to its own orientation (verified in the headset).")
     ap.add_argument("--src", choices=("poll", "cb", "synth"), default="poll",
                     help="pose source. 'poll' = get_gl_pose_carina: correct OpenGL frame and "
                          "gravity-anchored pitch/roll (the SDK documents this), ~30 pose updates/s. "
@@ -458,6 +462,12 @@ def main() -> int:
             dt = max(1e-3, min(0.25, now_s - prev_t[0]))
             prev_t[0] = now_s
             alpha = 1.0 if a.smooth <= 0.0 else (1.0 - math.exp(-dt / a.smooth))
+            # The SDK's forward translation is inverted relative to its orientation:
+            # walking forward moved the view backward. Orientation is verified correct, so
+            # only the forward component is negated (negating all three would flip
+            # left/right too). --no-flip-forward restores the raw value for measurement.
+            if a.sixdof and a.flip_forward:
+                pz0 = -pz0
             if ref_pos[0] is not None and a.sixdof:
                 px0 = (px0 - ref_pos[0][0]) * a.pos_gain
                 py0 = (py0 - ref_pos[0][1]) * a.pos_gain
