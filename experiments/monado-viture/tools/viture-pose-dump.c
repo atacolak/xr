@@ -107,10 +107,10 @@ usage(const char *argv0)
 	        "                   renderer looks down +z; without it a head turn drives the\n"
 	        "                   scene the wrong way.\n"
 	        "  --src-cb         take poses from the device callback instead of polling\n"
-	        "                   Measured 2026-10-15: the pose callback runs at ~18 Hz (the ~750 Hz\n"
-	        "                   figure in circulation is the IMU callback), it carries no status\n"
-	        "                   field, and its payload basis differs from the GL pose, so it is not\n"
-	        "                   directly comparable to the polled stream\n"
+	        "                   Same payload layout as the GL pose, but at the camera's rate (~18-25\n"
+	        "                   Hz measured) and with no status field. The vendor header says this\n"
+	        "                   interface can be ignored in most cases, and 25 Hz cannot drive a 90 Hz\n"
+	        "                   display on its own: the polled stream is the one to use\n"
 	        "  --cache DIR      cache directory for initialize() (as the app does)\n"
 	        "  --native-probe   also query native (Gen2) mode state; BLOCKS on Carina\n"
 	        "  --reset          reset the VIO origin before sampling\n"
@@ -511,18 +511,21 @@ main(int argc, char **argv)
 		const double t = now_s();
 		int r;
 		if (o.src_cb) {
-			/* Callback payload is [qw,qx,qy,qz, px,py,pz]; this tool's internal layout is
-			 * [px,py,pz, qw,qx,qy,qz] (the GL pose order), so reorder. No status field is
-			 * provided by the callback, and it is gravity-referenced and stable, so treat a
-			 * flowing callback as stable. */
-			const float *raw = g_cb_pose;
-			pose[0] = raw[4];
-			pose[1] = raw[5];
-			pose[2] = raw[6];
-			pose[3] = raw[0];
-			pose[4] = raw[1];
-			pose[5] = raw[2];
-			pose[6] = raw[3];
+			/*
+			 * The callback payload is [px,py,pz,qw,qx,qy,qz] -- the same layout as the GL pose.
+			 * viture_device_carina.h documents it next to XRPoseCallback: "Array of 7 floats:
+			 * [px, py, pz, qw, qx, qy, qz]", and describes the callback as "pose data at the
+			 * Camera's frequency (25 Hz) ... in most cases, this interface can be ignored".
+			 *
+			 * This used to reorder the payload as though it were [qw,qx,qy,qz,px,py,pz], which
+			 * shuffled the quaternion and the position into each other. The symptom recorded
+			 * from that was "the callback's quaternion is in the IMU's own frame, so orientation
+			 * comes out permuted and the view moves in weird places" -- that was this reorder,
+			 * not the device. No reorder is needed; only the rate differs from the polled path.
+			 */
+			for (int i = 0; i < VITURE_POSE_COUNT; i++) {
+				pose[i] = g_cb_pose[i];
+			}
 			status = 0;
 			r = __atomic_load_n(&g_cb_count, __ATOMIC_RELAXED) > 0 ? VITURE_GLASSES_SUCCESS : -1;
 		} else {
