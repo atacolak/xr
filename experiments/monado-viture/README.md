@@ -16,6 +16,28 @@ Breezy/Stardust-style spatial displays are references.
   VITURE Luma Ultra
 ```
 
+## The invariant: 90 Hz or it does not run
+
+**Non-negotiable, for everything built on these glasses.** Below the panel's refresh rate a
+stereoscopic head-tracked view is nauseating, and it also destroys the operator's ability to
+judge anything — with a stuttering image you cannot tell whether the world is mis-locked or the
+renderer is merely slow. Both failures look identical and both waste the session.
+
+So:
+
+- anything presented to these panels targets the panel rate: **90 Hz**, 3840x1200 side-by-side;
+- a renderer that cannot sustain it **refuses to run and says why**, instead of showing a bad
+  image. `tools/headtrack-demo.py` enforces this: a pre-flight measurement of the render cost
+  (with a warm-up, because cold frames are not representative) and a runtime stop after two
+  consecutive below-target reports. `--allow-low-fps` exists for bench work and nothing else;
+- an experiment that cannot meet the rate is **not a demo**. Do not show it to anyone as one,
+  however interesting the plumbing behind it is.
+
+This last point is why the harness in this directory is called a test instrument. It is software
+rendering both eyes on the CPU, which is categorically the wrong way to present stereo — it exists
+to answer questions about the *pose path* (see `docs/pose-pipeline.md`), and it answered them. A
+real application renders on the GPU; the driver plus Monado is what makes that possible.
+
 ## Where this sits
 
 `~/xr` is the control repo; this directory holds the experiment. Monado itself
@@ -120,7 +142,14 @@ windowed target and the window then stays **black** even though the client is fo
 (use `info`), and the XCB target may log `Selected display 0 has no size -- Falling
 back to display 3: DP-2`, which is normal and not an error.
 
-## The head-tracked demo (`tools/headtrack-demo.py`)
+## The head-tracked test instrument (`tools/headtrack-demo.py`)
+
+**A test instrument, not a demo** — see the invariant above. Its renderer is CPU-side PIL
+polygons, so it cannot hold the panel rate when the machine is busy, and that is a property of
+the instrument rather than of the glasses. It exists to answer questions about the pose path:
+frame conventions, the SDK's placeholder samples, the Euler singularity, whether the VIO gets
+camera frames, and how far it drifts. All of those are answered, and the answers are in
+`docs/pose-pipeline.md`.
 
 Shows the stereo scene from the glasses' own pose: device quaternion + position -> camera ->
 per-eye render -> fullscreen presenter. **6DoF by default** with `--6dof`, orientation-only

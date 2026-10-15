@@ -154,6 +154,10 @@ def main() -> int:
                          "diagonal, which is ~44.9 deg horizontal on an 8:5 panel. This "
                          "must match the optics or head motion feels too fast/slow, "
                          "because the panel stretches the render across the real FOV.")
+    ap.add_argument("--allow-low-fps", dest="allow_low_fps", action="store_true",
+                    help="run even if the panel rate cannot be sustained. Off by default: a "
+                         "stereoscopic head-tracked view below the target rate is nauseating, so "
+                         "the demo refuses to run rather than show it. For bench work only.")
     ap.add_argument("--no-flip-forward", dest="flip_forward", action="store_false",
                     help="do not negate the forward component of the 6DoF translation. The "
                          "negation is the default because the SDK reports forward inverted "
@@ -246,7 +250,7 @@ def main() -> int:
         assert encoder.stdin is not None and encoder.stdout is not None
         if use_gl:
             player = subprocess.Popen([str(xpresent_gl), str(frame_w), str(frame_h),
-                                       str(screen_w), str(screen_h)],
+                                       str(screen_w), str(screen_h), "1", str(a.fps)],
                                       stdin=encoder.stdout, env=env)
         elif xpresent.exists():
             player = subprocess.Popen([str(xpresent), str(screen_w), str(screen_h)],
@@ -382,6 +386,7 @@ def main() -> int:
         start_pose()
 
     render_errors = [0]
+    low_reports = [0]
     respawns = [0]
     frozen_key = [None]
     frozen_since = [None]
@@ -397,6 +402,30 @@ def main() -> int:
     t_report = time.monotonic()
     last = (0.0, 0.0, 0.0)
     demo.set_world(a.world)
+
+    # First-class invariant, and it is not negotiable: this is a stereoscopic head-tracked
+    # display. Below the panel's rate the experience is nauseating, and a low frame rate also
+    # destroys the operator's ability to judge anything -- it is impossible to tell whether the
+    # world is mis-locked or the renderer is merely stuttering. So a renderer that cannot reach
+    # the target says so and refuses to run, instead of showing a bad image.
+    if not a.allow_low_fps:
+        probe = 8
+        # Warm up first: the opening frames include first-touch allocation and page faults, and
+        # measuring them reports a ceiling far below what the renderer actually sustains.
+        for _ in range(3):
+            demo.render_frame(0.0, demo.Camera(), 0.0)
+        probe_t0 = time.monotonic()
+        for _ in range(probe):
+            demo.render_frame(0.0, demo.Camera(), 0.0)
+        cost_ms = (time.monotonic() - probe_t0) / probe * 1000.0
+        ceiling = 1000.0 / cost_ms if cost_ms > 0.0 else 0.0
+        print(f"  preflight: {cost_ms:5.1f} ms to render both eyes -> {ceiling:.0f} fps ceiling "
+              f"(target {a.fps})", flush=True)
+        if ceiling < a.fps:
+            print(f"  REFUSING TO RUN: measured ceiling {ceiling:.0f} fps is below the "
+                  f"{a.fps} fps target. Optimise the renderer, lower --res, or lower the panel "
+                  f"rate. Override for bench work with --allow-low-fps.", flush=True)
+            return 2
     try:
         while True:
             with lock:
@@ -484,6 +513,17 @@ def main() -> int:
                     # deadband as an angle: |dot| = cos(theta/2), so hold if theta is under it
                     if dot < math.cos(math.radians(a.deadband) / 2.0):
                         blended = [s + alpha * (g - s) for s, g in zip(sm, q_rel)]
+                        # Cap the per-frame rotation. When the gate adopts a stalled or
+                        # re-initialised pose the target can be far away, and 15 ms smoothing
+                        # applies roughly 60% of it in one frame -- a visible jerk, reported as
+                        # "the camera jerks for a split second". 960 deg/s turns a 180 deg
+                        # adoption into ~190 ms of motion, and is far above any real head
+                        # movement, so ordinary tracking is untouched.
+                        angle = math.degrees(2.0 * math.acos(min(1.0, max(-1.0, dot))))
+                        cap = 960.0 * dt
+                        if cap > 0.0 and angle > cap:
+                            frac = cap / angle
+                            blended = [s + (b - s) * frac for s, b in zip(sm, blended)]
                         norm = math.sqrt(sum(v * v for v in blended)) or 1.0
                         sm[:] = [v / norm for v in blended]
                     q_rel = tuple(sm)
@@ -561,9 +601,24 @@ def main() -> int:
             now = time.monotonic()
             if now - t_report > 2.0:
                 age_ms = 1000.0 * (time.monotonic() - (stream_t0[0] + pose_t)) if stream_t0[0] else float("nan")
-                print(f"  {n / (now - t_report):5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   "
+                fps_now = n / (now - t_report)
+                print(f"  {fps_now:5.1f} fps   pose age {age_ms:6.1f} ms   dropped {latest['dropped']:6d}   "
                       f"pos {px0:+.3f} {py0:+.3f} {pz0:+.3f} m   errs {render_errors[0]:4d}   yaw {last[0]:+7.1f}  "
                       f"pitch {last[1]:+7.1f}  roll {last[2]:+7.1f}", flush=True)
+                # The invariant is enforced while running too: the pre-flight can pass and the
+                # machine can still be dragged under the target (another app taking the CPU, a
+                # display change). Two consecutive bad reports is enough -- continuing to show
+                # a nauseating image is worse than stopping.
+                if not a.allow_low_fps and fps_now < 0.9 * a.fps:
+                    low_reports[0] += 1
+                    if low_reports[0] >= 2:
+                        print(f"  STOPPING: {fps_now:.0f} fps against a {a.fps} fps target, twice in a "
+                              f"row. Below the panel rate this is nauseating and it is impossible to "
+                              f"judge world-lock through it. Lower --res or free the machine; "
+                              f"--allow-low-fps overrides.", flush=True)
+                        return 3
+                else:
+                    low_reports[0] = 0
                 n, t_report = 0, now
     except (BrokenPipeError, KeyboardInterrupt):
         pass

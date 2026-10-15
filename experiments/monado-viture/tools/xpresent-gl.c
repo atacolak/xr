@@ -87,7 +87,7 @@ int
 main(int argc, char **argv)
 {
 	if (argc < 5) {
-		fprintf(stderr, "usage: xpresent-gl IN_W IN_H OUT_W OUT_H [hide_cursor]\n");
+		fprintf(stderr, "usage: xpresent-gl IN_W IN_H OUT_W OUT_H [hide_cursor] [target_fps]\n");
 		return 1;
 	}
 
@@ -96,6 +96,7 @@ main(int argc, char **argv)
 	const int out_w = atoi(argv[3]);
 	const int out_h = atoi(argv[4]);
 	const int hide_cursor = argc > 5 ? atoi(argv[5]) : 1;
+	const double target_fps = argc > 6 ? atof(argv[6]) : 0.0;
 	if (in_w <= 0 || in_h <= 0 || out_w <= 0 || out_h <= 0) {
 		die("dimensions must be positive");
 	}
@@ -262,6 +263,23 @@ main(int argc, char **argv)
 				        "xpresent-gl: vsync off -- swap interval 1 was pacing at %.0f ms/frame; no attached "
 				        "display does that (an unconnected output waits on a dummy vblank)\n",
 				        1000.0 * elapsed / (double)report_frames);
+			}
+			/*
+			 * And the slower case: synced to a vblank that is below the rate we were asked to
+			 * hit. With two outputs on one X screen the swap can resolve to the wrong CRTC --
+			 * measured here as exactly 60.0 fps on a 90 Hz panel, because the desktop monitor
+			 * is the primary. The caller paces its own frame production (it is told to run at
+			 * target_fps), so a vblank slower than that is not pacing us, it is throttling us.
+			 * Dropping the throttle restores the requested rate; at 90 fps on a 90 Hz panel the
+			 * two stay close enough in phase that tearing is minimal.
+			 */
+			if (vsync_on && target_fps > 0.0 && fps < 0.9 * target_fps) {
+				glXSwapIntervalEXT(dpy, glxwin, 0);
+				vsync_on = 0;
+				fprintf(stderr,
+				        "xpresent-gl: vsync off -- synced vblank paces at %.1f fps but %.0f fps was "
+				        "requested (the swap resolved to a slower output; caller paces the frames)\n",
+				        fps, target_fps);
 			}
 			report_frames = 0;
 			report_start = now;
