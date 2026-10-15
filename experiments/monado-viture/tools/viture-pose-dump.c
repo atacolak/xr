@@ -216,6 +216,12 @@ stream_frame_cb(const XRCameraFrame *f, void *user)
 	__atomic_add_fetch(&g_stream_frames, 1, __ATOMIC_RELAXED);
 }
 
+/* The sensor-session capture is defined below with its own block; this callback precedes it, and
+ * the build treats an implicit declaration as an error. */
+static void
+capture_camera(const char *l0, const char *r0, const char *l1, const char *r1, double sdk_ts, int w,
+               int h);
+
 /* ---- stereo camera frames: the Carina VIO's input ---- */
 static unsigned long long g_cam_frames;
 static int g_cam_w;
@@ -229,6 +235,7 @@ camera_frame_cb(char *left0, char *right0, char *left1, char *right1, double tim
 	(void)left1;
 	(void)right1;
 	(void)timestamp;
+	capture_camera(left0, right0, left1, right1, timestamp, width, height);
 	__atomic_add_fetch(&g_cam_frames, 1, __ATOMIC_RELAXED);
 	__atomic_store_n(&g_cam_w, width, __ATOMIC_RELAXED);
 	__atomic_store_n(&g_cam_h, height, __ATOMIC_RELAXED);
@@ -267,6 +274,114 @@ pose_cb(float *pose, double timestamp)
 	}
 	g_cb_ts = timestamp;
 	__atomic_add_fetch(&g_cb_count, 1, __ATOMIC_RELAXED);
+}
+
+/* ---- lossless sensor session (xr-carina-sensor-v1) ----
+ * The Linux half of the Android parity comparison in xr-wdw.10. The Android recorder already
+ * writes this format (console/recorder/.../SensorCapture.java: metadata.json, camera.index.jsonl,
+ * camera.gray8, pose.jsonl, imu.bin, vsync.jsonl), so writing the same one here makes the two
+ * hosts directly comparable instead of merely describable. Camera planes are the decisive half
+ * for parity -- the optical streams themselves plus their cadence -- and pose/IMU/vsync are
+ * already comparable through --json.
+ *
+ * The same capture feeds xr-wdw.4, which needs a recorded session with a calibration target.
+ */
+static FILE *g_cap_index, *g_cap_gray, *g_cap_meta;
+static const char *g_cap_dir;
+static unsigned long long g_cap_seq, g_cap_bytes;
+
+static void
+capture_close(void)
+{
+	if (g_cap_meta != NULL) {
+		fprintf(g_cap_meta,
+		        "{\n  \"format\": \"xr-carina-sensor-v1\",\n  \"closed\": true,\n"
+		        "  \"host\": \"linux\",\n  \"cam_seq\": %llu,\n  \"gray_bytes\": %llu,\n"
+		        "  \"camera_gray8\": \"concatenated 8-bit planes in camera.index.jsonl order\",\n"
+		        "  \"note\": \"host_ns is CLOCK_MONOTONIC; Android's elapsedRealtime is BOOTTIME\"\n}\n",
+		        g_cap_seq, g_cap_bytes);
+	}
+	if (g_cap_index != NULL) fclose(g_cap_index);
+	if (g_cap_gray != NULL) fclose(g_cap_gray);
+	if (g_cap_meta != NULL) fclose(g_cap_meta);
+	g_cap_index = g_cap_gray = g_cap_meta = NULL;
+}
+
+/*! Called from the camera callback. The four planes arrive with no length, so w*h each is the
+ *  same assumption the Android recorder makes; both write the result as 8-bit. */
+static void
+capture_camera(const char *l0, const char *r0, const char *l1, const char *r1, double sdk_ts, int w,
+               int h)
+{
+	if (g_cap_dir == NULL || w <= 0 || h <= 0) {
+		return;
+	}
+	if (g_cap_index == NULL) {
+		char path[4096];
+		snprintf(path, sizeof path, "%s/camera.index.jsonl", g_cap_dir);
+		g_cap_index = fopen(path, "w");
+		snprintf(path, sizeof path, "%s/camera.gray8", g_cap_dir);
+		g_cap_gray = fopen(path, "wb");
+		if (g_cap_index == NULL || g_cap_gray == NULL) {
+			fprintf(stderr, "capture: cannot write in %s\n", g_cap_dir);
+			g_cap_dir = NULL;
+			return;
+		}
+	}
+
+	struct timespec ts = {0};
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	const long long host_ns = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+	const size_t plane = (size_t)w * (size_t)h;
+	const char *planes[4] = {l0, r0, l1, r1};
+	const char *names[4] = {"l0", "r0", "l1", "r1"};
+	const long long off = (long long)g_cap_bytes;
+	size_t lens[4] = {0, 0, 0, 0};
+	size_t expect = 0;
+
+	for (int i = 0; i < 4; i++) {
+		if (planes[i] != NULL) {
+			expect += plane;
+			lens[i] = fwrite(planes[i], 1, plane, g_cap_gray);
+		}
+	}
+	size_t wrote = lens[0] + lens[1] + lens[2] + lens[3];
+	if (wrote != expect) {
+		/*
+		 * A short write makes this a truncated "lossless" capture: the index would look complete
+		 * and the planes would not be there. Worse than no capture, so stop loudly.
+		 *
+		 * A NULL plane is NOT that case and must not be treated as one: measured 2026-10-15, the
+		 * SDK hands over one buffer pair per call (the second pair null), which is what the
+		 * Android recorder's l0/r0/l1/r1 lengths are there to characterize.
+		 */
+		fprintf(stderr, "capture: short write (%zu of %zu bytes) -- stopping rather than recording a "
+		                "truncated session\n",
+		        wrote, expect);
+		exit(1);
+	}
+	g_cap_bytes += (unsigned long long)wrote;
+	fprintf(g_cap_index, "{\"seq\": %llu, \"sdk_ts\": %.9f, \"host_ns\": %lld, \"w\": %d, \"h\": %d, "
+	                     "\"off\": %lld",
+	        g_cap_seq, sdk_ts, host_ns, w, h, off);
+	for (int i = 0; i < 4; i++) {
+		fprintf(g_cap_index, ", \"%s\": %zu", names[i], lens[i]);
+	}
+	fprintf(g_cap_index, "}\n");
+	g_cap_seq++;
+}
+
+static void
+capture_finish(void)
+{
+	if (g_cap_dir == NULL) {
+		return;
+	}
+	char path[4096];
+	snprintf(path, sizeof path, "%s/metadata.json", g_cap_dir);
+	g_cap_meta = fopen(path, "w");
+	if (g_cap_index != NULL) fflush(g_cap_index);
+	if (g_cap_gray != NULL) fflush(g_cap_gray);
 }
 
 int
@@ -316,6 +431,15 @@ main(int argc, char **argv)
 			o.cache = argv[++i];
 		} else if (strcmp(a, "--pose-cb") == 0) {
 			o.pose_cb = true;
+		} else if (strcmp(a, "--capture") == 0) {
+			/* Write a lossless sensor session in the Android recorder's format
+			 * (xr-carina-sensor-v1), so the two hosts can be compared field by field. */
+			if (++i >= argc) {
+				fprintf(stderr, "--capture needs a directory\n");
+				return 2;
+			}
+			g_cap_dir = argv[i];
+			atexit(capture_close);
 		} else if (strcmp(a, "--self-test-axes") == 0) {
 			return self_test_axes();
 		} else if (strcmp(a, "--get-mode") == 0) {
@@ -631,6 +755,7 @@ main(int argc, char **argv)
 	}
 
 	const double elapsed = last - first;
+	capture_finish();
 	printf("\n---- summary ----\n");
 	printf("samples=%llu  failures=%llu  unstable=%llu\n", n, failures, unstable);
 	if (n > 1 && elapsed > 0.0) {
