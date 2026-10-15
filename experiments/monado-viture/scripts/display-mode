@@ -29,6 +29,25 @@ WANT="${1:-2d}"
 PATTERN=0
 for a in "$@"; do [ "$a" = "--pattern" ] && PATTERN=1; done
 
+# X derives the *screen's* physical size from the physical sizes of every attached output, and
+# every toolkit asks it for the DPI. The glasses declare 3840x1200 millimetres for a 3840x1200
+# pixel panel -- 25 dpi -- so merely attaching them rescales the whole desktop. Measured
+# 2026-10-15: with the desktop monitor alone, the screen read back as 277 dpi against its true
+# 110, rendering text 2.5x too large in every DPI-aware application. Pin the screen to the
+# primary output's real geometry after every layout change; cheap and idempotent.
+pin_dpi() {
+	local line px mmwid dpi
+	line=$(timeout 8 xrandr --query 2>/dev/null | awk '/ connected/ && / primary/ { print; exit }')
+	[ -n "$line" ] || return 0
+	px=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+x[0-9]+\+/) { split($i, a, "x"); print a[1]; exit } }' <<<"$line")
+	mmwid=$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+mm$/) { sub(/mm$/, "", $i); print $i; exit } }' <<<"$line")
+	[ -n "$px" ] && [ -n "$mmwid" ] && [ "$mmwid" -gt 0 ] 2>/dev/null || return 0
+	dpi=$(awk -v p="$px" -v m="$mmwid" 'BEGIN { printf "%d", p / (m / 25.4) + 0.5 }')
+	[ "$dpi" -gt 0 ] 2>/dev/null || return 0
+	timeout 8 xrandr --dpi "$dpi" 2>/dev/null || true
+	echo "--- screen dpi pinned to $dpi (primary ${px}px across ${mmwid}mm)"
+}
+
 # `off` is the resting state, and it is the default idea: the glasses are a presentation
 # surface, not a monitor. With the sink in SBS and no XR app presenting, the desktop is split
 # across the two eyes (left half one eye, right half the other), which is disorienting; and an
@@ -44,6 +63,7 @@ if [ "$WANT" = "off" ]; then
 	# glasses, and the sink's mode is irrelevant while it has no signal -- whereas issuing a
 	# mode change and having its teardown cut short by the timeout left the device refusing
 	# every subsequent mode command, which took a physical replug to clear.
+	pin_dpi
 	timeout 8 xrandr --query | grep -E "^Screen|^DP-0|^DP-2" | sed 's/^/    /'
 	exit 0
 fi
@@ -126,6 +146,7 @@ if [ -n "$PRIMARY" ] && [ "$PRIMARY" != "$OUT" ]; then
 	timeout 10 xrandr --output "$OUT" --pos 0x0 --output "$PRIMARY" --pos "${GLW:-3840}x0" && \
 		echo "--- placed $OUT at 0x0, $PRIMARY to its right (no overlap)"
 fi
+pin_dpi
 timeout 8 xrandr --query | sed -n "/^${OUT}/,/^[A-Z]/p" | head -4
 timeout 8 xrandr --query --current | head -1
 timeout 8 xrandr --listmonitors
