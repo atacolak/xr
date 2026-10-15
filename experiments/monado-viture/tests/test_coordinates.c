@@ -123,6 +123,47 @@ test_denormal_quaternion(void)
 	      "zero quaternion has no residual axis");
 }
 
+/*!
+ * Extreme attitudes must survive intact.
+ *
+ * The conversion passes the vendor quaternion through, so yaw 180 and pitch +-90 come out
+ * unchanged apart from normalisation. Those are exactly the attitudes where a rotation
+ * rebuilt from Euler yaw/pitch/roll is singular or simply wrong -- the class of bug that made
+ * the view refuse to turn past a certain angle, and that the demo hit in the headset. This is
+ * the offline guard for it.
+ */
+static void
+test_extreme_attitudes(void)
+{
+	struct xrt_space_relation r;
+
+	/* yaw 180 deg: (w, x, y, z) = (0, 0, 1, 0) */
+	const float yaw180[VITURE_POSE_COUNT] = {0, 0, 0, 0.0f, 0.0f, 1.0f, 0.0f};
+	viture_carina_to_space_relation(yaw180, true, true, VITURE_AXES_IDENTITY, 1.0f, &r);
+	CHECK(near(r.pose.orientation.y, 1.0f), "yaw180 y=%.4f", r.pose.orientation.y);
+	CHECK(near(r.pose.orientation.w, 0.0f), "yaw180 w=%.4f", r.pose.orientation.w);
+	CHECK(near(r.pose.orientation.x, 0.0f), "yaw180 x=%.4f", r.pose.orientation.x);
+
+	/* pitch +90 deg: (cos45, sin45, 0, 0) */
+	const float s = 0.70710678f;
+	const float pitch90[VITURE_POSE_COUNT] = {0, 0, 0, s, s, 0.0f, 0.0f};
+	viture_carina_to_space_relation(pitch90, true, true, VITURE_AXES_IDENTITY, 1.0f, &r);
+	CHECK(near(r.pose.orientation.x, s), "pitch90 x=%.4f", r.pose.orientation.x);
+	CHECK(near(r.pose.orientation.w, s), "pitch90 w=%.4f", r.pose.orientation.w);
+
+	/* unnormalised input with large yaw and pitch must land on the unit sphere */
+	const float combined[VITURE_POSE_COUNT] = {0, 0, 0, 2.0f, 1.0f, 1.0f, 0.5f};
+	viture_carina_to_space_relation(combined, true, true, VITURE_AXES_IDENTITY, 1.0f, &r);
+	const float len2 = r.pose.orientation.x * r.pose.orientation.x +
+	                   r.pose.orientation.y * r.pose.orientation.y +
+	                   r.pose.orientation.z * r.pose.orientation.z +
+	                   r.pose.orientation.w * r.pose.orientation.w;
+	CHECK(near(len2, 1.0f), "combined not normalised: |q|^2=%.5f", len2);
+
+	/* and the direction must be preserved through normalisation */
+	CHECK(near(r.pose.orientation.x, r.pose.orientation.y), "normalisation rotated the quaternion");
+}
+
 static void
 test_axes_override(void)
 {
@@ -146,6 +187,7 @@ main(void)
 	test_position_passthrough();
 	test_flags();
 	test_denormal_quaternion();
+	test_extreme_attitudes();
 	test_axes_override();
 
 	printf("%d checks, %d failures\n", g_checks, g_failures);

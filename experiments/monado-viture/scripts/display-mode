@@ -29,6 +29,26 @@ WANT="${1:-2d}"
 PATTERN=0
 for a in "$@"; do [ "$a" = "--pattern" ] && PATTERN=1; done
 
+# `off` is the resting state, and it is the default idea: the glasses are a presentation
+# surface, not a monitor. With the sink in SBS and no XR app presenting, the desktop is split
+# across the two eyes (left half one eye, right half the other), which is disorienting; and an
+# enabled second output drags the window manager into giving it workspaces, which the operator
+# notices as "I cannot reach workspaces one and two any more". So: nothing presenting, no
+# display.
+if [ "$WANT" = "off" ]; then
+	echo "--- turning the glasses off (desktop left as the only active output)"
+	timeout 15 xrandr --output DP-2 --off 2>/dev/null || true
+	PRIMARY=$(timeout 8 xrandr --query 2>/dev/null | awk '/ primary/{print $1; exit}')
+	[ -n "$PRIMARY" ] && timeout 15 xrandr --output "$PRIMARY" --pos 0x0 2>/dev/null || true
+	# Put the sink back to a sane single-image mode so nothing else can re-enable the output
+	# into SBS by accident. Bounded: an unhealthy device can stall on teardown.
+	LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+		timeout 25 "$ROOT/tools/viture-pose-dump" --set-mode 1920x1080@60-2d --seconds 2 2>&1 |
+		grep -E "^display mode:|^set\(" | sed 's/^/    /' || true
+	timeout 8 xrandr --query | grep -E "^Screen|^DP-0|^DP-2" | sed 's/^/    /'
+	exit 0
+fi
+
 case "$WANT" in
 	2d)
 		MODE_NAME='1920x1200@90-2d'
@@ -41,10 +61,11 @@ case "$WANT" in
 		X_RATE='90'
 		;;
 	*)
-		echo "usage: $0 2d|sbs [--pattern]" >&2
+		echo "usage: $0 off|2d|sbs [--pattern]" >&2
 		exit 2
 		;;
 esac
+
 
 [ -x "$TOOL" ] || { echo "no $TOOL (build it: tools/build-pose-dump.sh)" >&2; exit 1; }
 command -v xrandr >/dev/null || { echo "no xrandr" >&2; exit 1; }
