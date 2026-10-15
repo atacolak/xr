@@ -40,11 +40,10 @@ if [ "$WANT" = "off" ]; then
 	timeout 15 xrandr --output DP-2 --off 2>/dev/null || true
 	PRIMARY=$(timeout 8 xrandr --query 2>/dev/null | awk '/ primary/{print $1; exit}')
 	[ -n "$PRIMARY" ] && timeout 15 xrandr --output "$PRIMARY" --pos 0x0 2>/dev/null || true
-	# Put the sink back to a sane single-image mode so nothing else can re-enable the output
-	# into SBS by accident. Bounded: an unhealthy device can stall on teardown.
-	LD_LIBRARY_PATH="$SDK/x86_64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-		timeout 25 "$ROOT/tools/viture-pose-dump" --set-mode 1920x1080@60-2d --seconds 2 2>&1 |
-		grep -E "^display mode:|^set\(" | sed 's/^/    /' || true
+	# Deliberately do NOT talk to the device here. Turning the CRTC off already blanks the
+	# glasses, and the sink's mode is irrelevant while it has no signal -- whereas issuing a
+	# mode change and having its teardown cut short by the timeout left the device refusing
+	# every subsequent mode command, which took a physical replug to clear.
 	timeout 8 xrandr --query | grep -E "^Screen|^DP-0|^DP-2" | sed 's/^/    /'
 	exit 0
 fi
