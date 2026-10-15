@@ -301,9 +301,19 @@ viture_poll_pose_locked(struct viture_hmd *hmd, double predict_s, struct xrt_spa
 	const bool stable = status == VITURE_POSE_STATUS_STABLE;
 	const unsigned long long cam_frames = __atomic_load_n(&g_carina_camera_frames, __ATOMIC_RELAXED);
 	/*
-	 * "Tracked" means we have evidence the pose is being solved from real images, not that a
-	 * status flag says so. 6DoF never reports stable, so keying on it alone would advertise
-	 * every working 6DoF pose as untracked.
+	 * PREDICATE CORRECTED 2026-10-15 (xr-bi6.15). This used to claim that camera frames arriving
+	 * are "evidence the pose is being solved from real images". That is false: measured in a live
+	 * hello_xr session, 2100 camera frames arrived while every one of 6000 samples reported the
+	 * unsettled status and the device sat untouched on a bench. Frames reach the VIO; that says
+	 * nothing about whether the VIO solves.
+	 *
+	 * The flag stays set anyway, deliberately. The vendor's own applications have no better signal
+	 * available: the public API exposes no covariance, feature count or convergence indicator, and
+	 * the wear sensor returns NOT_SUPPORTED on this device (-4 measured). An application cannot be
+	 * given a better answer than the platform gives. What we can do is stop asserting the false
+	 * reason in the source, and record the two observations that would identify the state if a
+	 * signal ever appears: camera frames flowing, and a reported position that does not respond to
+	 * motion.
 	 */
 	const bool tracked = stable || cam_frames > 0;
 	hmd->last_status = status;
@@ -391,6 +401,21 @@ viture_hmd_get_tracked_pose(struct xrt_device *xdev,
 
 	struct xrt_space_relation relation = XRT_SPACE_RELATION_ZERO;
 	os_mutex_lock(&hmd->mutex);
+	/*
+	 * Report what we actually ask the vendor to predict (xr-bi6.14). The chain looked complete
+	 * on paper -- Monado passes the predicted display time, this converts the interval, the
+	 * vendor extrapolates -- but a whole hello_xr session produced no trace of it. The first job
+	 * is therefore to establish that this function is on the session path at all and what
+	 * interval it is handed. Keyed on wall time, not on pose_samples: that counter is driven
+	 * mostly by update_inputs, so a modulo of it can miss this function entirely.
+	 */
+	static int64_t last_predict_log_ns;
+	const int64_t predict_log_now = (int64_t)os_monotonic_get_ns();
+	if (predict_log_now - last_predict_log_ns > 1000000000) {
+		last_predict_log_ns = predict_log_now;
+		VITURE_INFO(hmd, "prediction: at_timestamp %s, asking the vendor for %.2f ms ahead",
+		            at_timestamp_ns > 0 ? "set" : "unset", predict_s * 1000.0);
+	}
 	const bool ok = viture_poll_pose_locked(hmd, predict_s, &relation);
 	if (ok) {
 		hmd->last_relation = relation;
@@ -532,6 +557,20 @@ viture_sdk_start(struct viture_hmd *hmd)
 		VITURE_WARN(hmd, "set_auto_exposure_carina failed: %d (cameras may stay dark)", ae_ret);
 	} else if (hmd->cfg.sixdof) {
 		VITURE_INFO(hmd, "carina callbacks registered before start, auto exposure set after it");
+	}
+
+	/*
+	 * Wear detection: the one real signal the SDK exposes about whether a pose can mean
+	 * anything. The header says Gen2 devices only and this device reports as Gen1/Carina, so
+	 * NOT_SUPPORTED is a legitimate answer -- but we should know which it is, because today the
+	 * driver cannot tell a head from a desk (see xr-bi6.15).
+	 */
+	uint8_t wear = 0;
+	const int wear_ret = xr_device_provider_get_wear_status(hmd->provider, &wear);
+	if (wear_ret == VITURE_GLASSES_SUCCESS) {
+		VITURE_INFO(hmd, "wear status: %s", wear ? "worn" : "not worn");
+	} else {
+		VITURE_INFO(hmd, "wear status unavailable: %d (header says Gen2 devices only)", wear_ret);
 	}
 
 	VITURE_INFO(hmd, "vendor SDK %s ready, %s, device_type=%d", GetVersionString(),
