@@ -1,30 +1,33 @@
 #!/usr/bin/env python3
 """Measure the VIO's metric scale against a known real displacement.
 
-docs/measurements.md has the procedure; this is the instrument for it. The arithmetic is
-trivial and the noise floor is not, which is the whole reason the tool exists.
+docs/measurements.md has the procedure; this is the instrument for it. Everything here exists
+because of traps found by running it, and each one cost a measurement:
 
-Two traps it is built around, both found by running it:
+1. THE ORIGIN IS PER PROCESS. Measured 2026-10-15: the device was displaced 10.0 cm and the
+   reported position moved 0.0002 m. The vendor VIO starts its own map/origin when the SDK
+   initialises it, so every process begins at zero wherever the device happens to be sitting.
+   A displacement therefore cannot be measured across two runs, however carefully they are
+   assembled -- it must be one continuous session, split in time. That is what this tool does:
+   one `viture-pose-dump` process, the operator presses enter when the device is in place, and
+   the samples are split at the moment the move was requested.
 
-1. CONVERGENCE IS NOT NOISE. At start the driver sets the origin at the current pose, so the
-   first samples sit at (0,0,0) and the reported position then converges to where the device
-   really is -- measured 2026-10-15 as a ramp to about (0, 0.17, 0.04) m over the first second,
-   identical across runs. Taking max-min over a whole phase measures that ramp and reports a
-   0.177 m "noise floor" for a device whose settled wander is millimetres. The first
-   `--settle` seconds are therefore dropped before any statistics, and both phases use the
-   settled tail.
+2. CONVERGENCE IS NOT NOISE. The first samples sit at the origin and the position then ramps to
+   the device's real pose -- about (0, -0.17, -0.05) m at this bench, identical every time.
+   Taking max-min across a phase measures that ramp: an early version of this tool reported a
+   0.177 m "noise floor" for a device whose settled wander is 0.3 mm. A settling window is
+   dropped from both phases and the ramp is reported separately.
 
-2. ONE AXIS IS A GUESS. The SDK's position axes are undocumented (`VITURE_POSITION_SCALE`
-   exists because the unit is unverified), so assuming which one is "forward" would bake a
-   guess into the measurement. The scale comes from the delta's MAGNITUDE, which is
-   mapping-free, and the per-axis breakdown is printed so the mapping can be read off. A yaw
-   that changes between phases also invalidates a translation reading, so orientation drift is
-   reported and gates the result.
+3. ONE AXIS IS A GUESS. The SDK's position axes are undocumented (`VITURE_POSITION_SCALE` exists
+   because the unit is unverified), so assuming which one is "forward" bakes a guess into the
+   result. The scale comes from the delta's MAGNITUDE, which is mapping-free, and the per-axis
+   breakdown is printed so the mapping can be read off. A yaw change makes it a rotation
+   measurement, so the orientation drift between windows gates the result.
 
 Usage:
-  tools/scale-test                    # set it going and follow the prompts
-  tools/scale-test --distance 0.30    # distance known up front, no prompt
-  tools/scale-test --seconds 10 --settle 2 --json-lines /tmp/scale.jsonl
+  tools/scale-test                  # prompts: settle, "move it now", press enter
+  tools/scale-test --distance 0.30  # known up front, skips the distance prompt
+  tools/scale-test --moved-seconds 12 --json-lines /tmp/scale.jsonl
 """
 
 from __future__ import annotations
@@ -37,6 +40,8 @@ import pathlib
 import statistics
 import subprocess
 import sys
+import threading
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOOL = ROOT / "tools" / "viture-pose-dump"
@@ -45,40 +50,52 @@ SDK = pathlib.Path(
 )
 
 
-def collect(seconds: float, label: str) -> list[dict]:
-    """Run the pose tool and return its JSON samples."""
-    env = dict(os.environ)
-    env["LD_LIBRARY_PATH"] = f"{SDK}/x86_64" + (f":{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else "")
-    print(f"  sampling {seconds:.0f} s ({label}) ...", flush=True)
-    proc = subprocess.run(
-        [str(TOOL), "--seconds", str(seconds), "--json"],
-        capture_output=True, text=True, env=env, timeout=seconds + 60,
-    )
-    samples = []
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            d = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if d.get("ok") == 1:
-            samples.append(d)
-    if not samples:
-        print("  no samples. Is the device attached and free? (one process at a time)", file=sys.stderr)
-        sys.exit(1)
-    return samples
+class PoseStream:
+    """One pose-tool process, read continuously so the pipe never blocks the writer."""
 
+    def __init__(self, total_seconds: float, cache: str | None):
+        env = dict(os.environ)
+        env["LD_LIBRARY_PATH"] = f"{SDK}/x86_64" + (f":{env['LD_LIBRARY_PATH']}" if env.get("LD_LIBRARY_PATH") else "")
+        cmd = [str(TOOL), "--seconds", str(total_seconds), "--json"]
+        if cache:
+            cmd += ["--cache", cache]
+        self.samples: list[dict] = []
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
+        self.last_t = 0.0
+        self._thread = threading.Thread(target=self._read, daemon=True)
+        self._thread.start()
 
-def settled(samples: list[dict], settle: float) -> list[dict]:
-    """Samples after the convergence window. See trap 1 in the module docstring."""
-    tail = [s for s in samples if s["t"] >= settle]
-    return tail if len(tail) >= 10 else samples[-max(10, len(samples) // 4):]
+    def _read(self) -> None:
+        assert self.proc.stdout is not None
+        for line in self.proc.stdout:
+            line = line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if d.get("ok") == 1:
+                self.samples.append(d)
+                self.last_t = d["t"]
+
+    def wait_until(self, t: float, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.last_t >= t:
+                return True
+            if self.proc.poll() is not None:
+                return False
+            time.sleep(0.05)
+        return False
+
+    def stop(self) -> None:
+        if self.proc.poll() is None:
+            self.proc.terminate()
+        self._thread.join(timeout=5.0)
 
 
 def stats(samples: list[dict]) -> tuple[list[float], list[float], list[float]]:
-    """Mean per axis, spread per axis, mean orientation (yaw, pitch, roll)."""
     means, spreads = [], []
     for k in ("px", "py", "pz"):
         v = [s[k] for s in samples]
@@ -88,61 +105,77 @@ def stats(samples: list[dict]) -> tuple[list[float], list[float], list[float]]:
     return means, spreads, orient
 
 
-def report(samples: list[dict], settle: float, label: str) -> tuple[list[float], list[float], list[float]]:
-    tail = settled(samples, settle)
-    means, spreads, orient = stats(tail)
-    ramp = math.sqrt(sum(samples[0][k] ** 2 for k in ("px", "py", "pz"))) if samples else 0.0
-    print(f"  {label}: {len(samples)} samples, {len(tail)} after settling")
+def report(samples: list[dict], label: str) -> tuple[list[float], list[float], list[float]]:
+    means, spreads, orient = stats(samples)
+    print(f"  {label}: {len(samples)} samples")
     print(f"    mean position   ({means[0]:+.4f} {means[1]:+.4f} {means[2]:+.4f}) m")
     print(f"    settled wander   {spreads[0]:.4f} {spreads[1]:.4f} {spreads[2]:.4f} m  (per axis, max-min)")
     print(f"    mean orientation yaw {orient[0]:+.2f}  pitch {orient[1]:+.2f}  roll {orient[2]:+.2f} deg")
-    if ramp > 0.01:
-        print(f"    (converged from the origin: first sample {ramp:.4f} m away -- not noise)")
     return means, spreads, orient
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--seconds", type=float, default=6.0, help="seconds per phase (default 6)")
-    ap.add_argument("--settle", type=float, default=1.5, help="seconds to drop as convergence (default 1.5)")
-    ap.add_argument("--distance", type=float, help="known displacement in metres; skips the prompt")
-    ap.add_argument("--json-lines", metavar="FILE", help="append every sample here for later re-analysis")
-    ap.add_argument("--skip-prompt", action="store_true", help="do not wait for a keypress between phases")
+    ap.add_argument("--settle", type=float, default=2.0, help="seconds dropped as convergence (default 2)")
+    ap.add_argument("--still-seconds", type=float, default=5.0, help="seconds sampled before the move (default 5)")
+    ap.add_argument("--moved-seconds", type=float, default=8.0, help="seconds sampled after the move (default 8)")
+    ap.add_argument("--distance", type=float, help="known displacement in metres; skips the distance prompt")
+    ap.add_argument("--cache", metavar="DIR", help="pass a VIO cache directory to the pose tool (see bead)")
+    ap.add_argument("--json-lines", metavar="FILE", help="write every sample with its phase")
+    ap.add_argument("--skip-prompt", action="store_true", help="do not wait for a keypress (bench self-test)")
     a = ap.parse_args()
 
     if not TOOL.exists():
         print(f"no {TOOL} (build it: tools/build-pose-dump.sh)", file=sys.stderr)
         return 1
 
-    print("Scale test. Two phases: still, then displaced by a known distance.\n")
-    print("  point the glasses at something lit and textured (a wall, the monitor) and leave")
-    print("  them there for the whole run. Facing a dark featureless room, the VIO drifts for")
-    print("  real, not just at startup, and that drift is what this tool then measures instead")
-    print("  of the movement.\n")
+    print("Scale test. ONE pose session, split at the moment you move the device.\n")
+    print("  the origin is set when the SDK session starts, so a displacement measured across")
+    print("  two runs is always zero. Hence: leave this running, move the glasses when asked.\n")
+    print("  point the glasses at something lit and textured, and leave them alone otherwise.\n")
 
-    still = collect(a.seconds, "still")
-    m1, s1, o1 = report(still, a.settle, "phase 1 (still)")
+    # One process has to outlive: settle + the operator handling it + the moved window.
+    total = a.settle + 120.0 + a.moved_seconds
+    stream = PoseStream(total, a.cache)
+    # Settle, then hold still for a real window before touching anything: reaching the settle
+    # mark is not the same as having samples for the still phase.
+    if not stream.wait_until(a.settle + a.still_seconds, timeout=a.settle + a.still_seconds + 25.0):
+        print("  no pose data. Is the device attached and free? (one process at a time)", file=sys.stderr)
+        stream.stop()
+        return 1
+
+    still = [s for s in stream.samples if s["t"] >= a.settle]
+    if len(still) < 20:
+        print("  too few settled samples; try a longer --still-seconds", file=sys.stderr)
+        stream.stop()
+        return 1
 
     dist = a.distance
-    if dist is None:
-        print()
-        answer = input("  displace the glasses by a known distance, then press enter (or give metres): ").strip()
+    if dist is None and not a.skip_prompt:
+        answer = input(f"  displace the glasses by a known distance, then enter the metres "
+                       f"[default 0.100]: ").strip()
         try:
-            dist = float(answer) if answer else float("nan")
+            dist = float(answer) if answer else 0.100
         except ValueError:
-            dist = float("nan")
-        if math.isnan(dist):
-            floor = math.sqrt(sum(x * x for x in s1))
-            print(f"\n  no distance given. The settled motionless wander is {floor:.4f} m (3D).")
-            print(f"  Anything below ~{4 * floor:.4f} m is inside it.")
-            return 0
-
+            dist = 0.100
+    move_from = stream.last_t
     if not a.skip_prompt:
-        print(f"\n  now displace the glasses exactly {dist:.3f} m along the tape -- one axis is fine,")
-        input("  and keep the orientation the same. Press enter when they are in place and still: ")
+        print("\n  MOVE IT NOW. Keep the orientation the same (forward/back along the tape is fine).")
+        input("  press enter once it is in place and still: ")
+    moved_from = stream.last_t
 
-    moved = collect(a.seconds, "displaced")
-    m2, s2, o2 = report(moved, a.settle, "phase 2 (displaced)")
+    print(f"  sampling {a.moved_seconds:.0f} s after the move ...", flush=True)
+    stream.wait_until(moved_from + a.moved_seconds, timeout=a.moved_seconds + 30.0)
+    stream.stop()
+
+    moved = [s for s in stream.samples if s["t"] >= moved_from + a.settle]
+    if len(moved) < 20:
+        print("  too few samples after the move; try a longer --moved-seconds", file=sys.stderr)
+        return 1
+
+    print()
+    m1, s1, o1 = report(still, "phase 1 (still)")
+    m2, s2, o2 = report(moved, "phase 2 (displaced)")
 
     delta = [m2[i] - m1[i] for i in range(3)]
     mag = math.sqrt(sum(d * d for d in delta))
@@ -153,23 +186,7 @@ def main() -> int:
     print(f"  delta          ({delta[0]:+.4f} {delta[1]:+.4f} {delta[2]:+.4f}) m   |delta| {mag:.4f} m")
     print(f"  tape says      {dist:.4f} m")
     print(f"  orientation drift between phases: {drift:.2f} deg")
-    print(f"  settled motionless wander (3D):  {floor:.4f} m")
-
-    if drift > 5.0:
-        print("\n  REFUSING A SCALE: the orientation moved more than 5 deg between phases, so this")
-        print("  is not a pure translation. Re-seat the glasses and run again.")
-        return 2
-    if mag < 4.0 * floor:
-        print(f"\n  REFUSING A SCALE: the movement ({mag:.4f} m) is not clear of the wander")
-        print(f"  ({floor:.4f} m). 4x the wander is the minimum trustworthy signal. Displace further,")
-        print("  or settle the VIO by pointing the glasses at a lit, textured scene first.")
-        return 3
-
-    scale = mag / dist
-    print(f"\n  VITURE_POSITION_SCALE should be {scale:.4f}   (1/ratio = {1.0 / scale:.4f})")
-    print(f"  one unit of SDK position is {1.0 / scale:.4f} m of real movement")
-    print("\n  set it with VITURE_POSITION_SCALE=<value> and re-run: the wander must not change,")
-    print("  because the scale is linear (docs/measurements.md step 4).")
+    print(f"  settled motionless wander (3D):  {floor:.4f} m   (same session, so comparable)")
 
     if a.json_lines:
         with open(a.json_lines, "a", encoding="utf-8") as fh:
@@ -177,7 +194,21 @@ def main() -> int:
                 fh.write(json.dumps({"phase": "still", **s}) + "\n")
             for s in moved:
                 fh.write(json.dumps({"phase": "moved", **s}) + "\n")
-        print(f"\n  samples appended to {a.json_lines}")
+
+    if drift > 5.0:
+        print("\n  REFUSING A SCALE: the orientation moved more than 5 deg between phases, so this is")
+        print("  not a pure translation. Re-seat the glasses and run again.")
+        return 2
+    if mag < 4.0 * floor:
+        print(f"\n  REFUSING A SCALE: the movement ({mag:.4f} m) is not clear of the wander")
+        print(f"  ({floor:.4f} m). 4x the wander is the minimum trustworthy signal.")
+        return 3
+
+    scale = mag / dist
+    print(f"\n  VITURE_POSITION_SCALE should be {scale:.4f}   (1/ratio = {1.0 / scale:.4f})")
+    print(f"  one unit of SDK position is {1.0 / scale:.4f} m of real movement")
+    print("\n  set it with VITURE_POSITION_SCALE=<value> and re-run: the wander must not change,")
+    print("  because the scale is linear (docs/measurements.md step 4).")
     return 0
 
 

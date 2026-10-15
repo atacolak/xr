@@ -131,31 +131,36 @@ Verified without any hardware:
 
 ### Procedure: translation unit (`VITURE_POSITION_SCALE`)
 
-Run `tools/scale-test`, which automates the four steps below and refuses to divide when the
-movement is not clear of the VIO's motionless noise floor:
+Run `tools/scale-test`. It automates the measurement and refuses to divide when the movement is
+not clear of the VIO's wander:
 
 ```sh
-tools/scale-test                      # 6 s still, prompt for the displacement, 6 s moved
+tools/scale-test                      # leave it running; move the glasses when it asks
 tools/scale-test --distance 0.30      # if the distance is known up front
 ```
 
-Two things it does differently from reading the numbers by hand:
+Two constraints it exists to encode, both found by measurement on 2026-10-15:
 
-* the scale comes from the **magnitude** of the delta, not from one axis. The SDK's position
-  axes are undocumented, so assuming which one is "forward" would bake a guess into the
-  measurement; the per-axis breakdown is printed instead so the mapping can be read off.
-* it reports the orientation drift between phases and refuses a scale above 5 deg, because a
-  yaw change makes it a rotation measurement, not a translation one.
+* **the origin is per process.** The device was displaced a measured 10.0 cm and the reported
+  position moved 0.0002 m -- half a millimetre. The vendor VIO starts its own map when the SDK
+  initialises, so every process begins at zero wherever the device happens to be sitting, and a
+  displacement can never be measured across two runs. It has to be one continuous session split
+  in time, which is what the tool does: one pose process, split at the moment the move is
+  requested. This is also why the driver's per-session origin reset is correct rather than
+  annoying -- a restart is supposed to lose the world.
+* **convergence is not noise.** The first samples sit at the origin and the position then ramps
+  to the device's real pose (about `(0, -0.17, -0.05)` m at this bench, identical every run).
+  Taking max-min across a phase measures that ramp and reports it as a noise floor -- an early
+  version of the tool claimed 0.177 m for a device whose settled wander is 0.3 mm. A settling
+  window is dropped from both phases, and the ramp is reported separately.
 
-Manual version of the same thing:
+Because the settled wander is 0.3 mm, a 10 cm displacement is ~300x the noise: the measurement
+is comfortable, and a smaller move would still work. The scale comes from the delta's magnitude
+(the SDK's position axes are undocumented, so assuming which is "forward" would bake in a guess)
+with orientation drift as a gate, since a yaw change makes it a rotation measurement.
 
-1. `tools/viture-pose-dump --seconds 20 --json > still.json` — do not move.
-   The position spread over the run is the VIO's noise floor.
-2. Repeat while sliding the head a measured **10.0 cm** to the right, slowly.
-3. Divide the observed delta by 0.10 m. If it is not ~1.0, set
-   `VITURE_POSITION_SCALE` to its inverse.
-4. Re-run and confirm the quieter of the two runs' spread is unchanged by the
-   scale (it must be: the scale is linear).
+Set the result with `VITURE_POSITION_SCALE=<value>` and re-run: the settled wander must not
+change, because the scale is linear.
 
 `XRLinuxDriver` multiplies this same translation by a lens-pivot ratio for its
 virtual-screen model, which is why "just copy them" is not an option here: their
