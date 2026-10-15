@@ -126,7 +126,7 @@ Verified without any hardware:
 | prediction | `predict_time` seconds ahead, `0.0` = latest sample | documented; driver passes Monado's requested interval |
 | recenter | `reset_origin_carina` resets position+yaw, leaves pitch/roll gravity-anchored; `reset_pose_carina` is a heavyweight full VIO restart | documented |
 | 3DoF vs 6DoF | `set_dof_type_carina(is_6dof)`, after create, before initialize; default 6DoF | documented |
-| **translation unit** | **UNVERIFIED** — the headers never state it | needs the 10 cm test below |
+| **translation unit** | **1.0402 m per unit, measured 2026-10-15** — a 0.1000 m tape displacement produced 0.09613 m of SDK position (z axis, one session) | `VITURE_POSITION_SCALE` defaults to this; set 1.0 for raw units |
 | linear/angular velocity | not exposed by the SDK; driver reports none | measured absence |
 
 ### Procedure: translation unit (`VITURE_POSITION_SCALE`)

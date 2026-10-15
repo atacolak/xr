@@ -212,11 +212,15 @@ def main() -> int:
         print(f"  ({floor:.4f} m). 4x the wander is the minimum trustworthy signal.")
         return 3
 
-    scale = mag / dist
-    print(f"\n  VITURE_POSITION_SCALE should be {scale:.4f}   (1/ratio = {1.0 / scale:.4f})")
-    print(f"  one unit of SDK position is {1.0 / scale:.4f} m of real movement")
-    print("\n  set it with VITURE_POSITION_SCALE=<value> and re-run: the wander must not change,")
-    print("  because the scale is linear (docs/measurements.md step 4).")
+    # The driver computes metres = reported * VITURE_POSITION_SCALE, so the value it wants is the
+    # reciprocal of this ratio: a device reporting 0.96 units per real metre needs 1/0.96.
+    print(f"\n  the device reported {mag:.4f} m of SDK position for {dist:.4f} m of real movement")
+    print(f"  ratio reported/real = {scale:.4f}")
+    print(f"\n  VITURE_POSITION_SCALE = {1.0 / scale:.4f}      (the driver does metres = reported x scale)")
+    print(f"  i.e. one SDK unit is {1.0 / scale:.4f} m of real movement")
+    print("\n  the origin reset removes any constant offset, so this ratio is the scale itself and one")
+    print("  good distance is enough. Re-run with the value set: the settled wander must be unchanged,")
+    print("  because a scale is linear.")
     return 0
 
 

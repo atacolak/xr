@@ -1,0 +1,18 @@
+{
+  "jobs": [
+    {
+      "id": "6nkSXjfEXy",
+      "name": "ht-demo-finish",
+      "schedule": "2026-10-07T01:50:51.477Z",
+      "prompt": "Resume the head-tracked demo work in /home/sf/workspace/xr/experiments/monado-viture (todos: Scene and camera phase). The operator is away and the XR glasses are unplugged, so verify with rendered stills and window captures, never by expecting a live panel. Check: (1) tools/xpresent-gl.c from the GlPresenter subagent, (2) cube face culling fixed, (3) scene rebuilt with the camera inside the grid and objects on all four sides moving only in depth, (4) solid shaded floor, (5) pose smoothing, (6) translation plumbed for 6DoF, (7) synthetic pose source so the pipeline runs without hardware. Then record the M3 result in beads and report.",
+      "enabled": false,
+      "type": "once",
+      "createdAt": "2026-10-07T01:25:51.477Z",
+      "runCount": 1,
+      "session": "01a0dded-a8f0-7000-bdc0-c23da43c7223",
+      "lastStatus": "success",
+      "lastRun": "2026-10-07T01:50:51.480Z"
+    }
+  ],
+  "version": 1
+}

@@ -7,6 +7,9 @@ Preserved Fold-side glue. Not a place to absorb Voicecat, UxSpace, or Herdr.
 - `scripts/termux-url-opener` — Play Store Termux FileReceiver execute path (HERDR sentinel)
 - `scripts/herdr-paste` / `fold-herdr-paste` — semantic paste into Herdr
 - `scripts/start-services` — Play-Termux boot (do not install F-Droid Termux:Boot)
+- `scripts/adb-keep` — runit loop: keep Fold-local adb `device` so One UI
+  does not drop the wireless pairing record. `adb-keep.run` is the service
+  wrapper. Does not recreate a revoked identity.
 - `wadb-helper/` — tiny app to re-enable `adb_wifi_enabled` after boot and Wi-Fi reconnect.
   Source in-tree; APK untracked. Package `sh.colak.fold.wadb`. One-time:
   `adb shell pm grant sh.colak.fold.wadb android.permission.WRITE_SECURE_SETTINGS`

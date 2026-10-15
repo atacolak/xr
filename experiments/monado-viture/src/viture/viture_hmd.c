@@ -147,7 +147,19 @@ viture_carina_vsync_cb(double ts) { (void)ts; }
 static void
 viture_carina_imu_cb(float *imu, double ts) { (void)imu; (void)ts; }
 
-DEBUG_GET_ONCE_FLOAT_OPTION(viture_position_scale, "VITURE_POSITION_SCALE", 1.0f)
+/*
+ * Measured 2026-10-15 with a tape rig and tools/scale-test: a 0.1000 m displacement produced
+ * 0.09613 m +/- 0.00005 m of SDK position in one continuous session, entirely on the z axis. So
+ * the SDK reports 0.9613 units per real metre, and one unit is 1.0402 m.
+ *
+ * The origin reset (reset_origin_carina, called at session start) removes any constant offset,
+ * so the reported ratio is the scale itself -- one good distance settles it, and the ~3.9% error
+ * is the kind that makes a world feel like it moves wrong under your feet.
+ *
+ * VITURE_POSITION_SCALE is the multiplier this driver applies to get metres, hence 1/0.9613.
+ * Set it to 1.0 to get the raw SDK units back.
+ */
+DEBUG_GET_ONCE_FLOAT_OPTION(viture_position_scale, "VITURE_POSITION_SCALE", 1.0402f)
 DEBUG_GET_ONCE_BOOL_OPTION(viture_flip_forward, "VITURE_FLIP_FORWARD", true)
 DEBUG_GET_ONCE_OPTION(viture_pose_axes, "VITURE_POSE_AXES", NULL)
 DEBUG_GET_ONCE_OPTION(viture_cache_dir, "VITURE_CACHE_DIR", NULL)

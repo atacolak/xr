@@ -1,0 +1,43 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# Keep a live Fold-local adb session.
+#
+# One UI 8.5 on this Fold can empty Wireless Debugging "paired devices"
+# even when Settings.Global.adb_allowed_connection_time is 0. The USB
+# authorization-timeout toggle does not pin that list. What does: an
+# actual adb `device` session, plus re-asserting adb_wifi_enabled from
+# shell uid. Pairing itself remains an OS ceremony; this loop cannot
+# recreate a revoked identity.
+set -u
+PATH="${HOME}/bin:${PREFIX:+$PREFIX/bin:}/data/data/com.termux/files/usr/bin:/system/bin:/system/xbin:${PATH:-}"
+export ADB_MDNS_OPENSCREEN="${ADB_MDNS_OPENSCREEN:-1}"
+
+have_device() {
+  adb devices 2>/dev/null | awk 'NF && $1 != "List" && $2 == "device" { found=1 } END { exit found ? 0 : 1 }'
+}
+
+ping_device() {
+  adb shell true >/dev/null 2>&1
+}
+
+assert_toggle() {
+  adb shell settings put global adb_wifi_enabled 1 >/dev/null 2>&1 || true
+  adb shell settings put global adb_allowed_connection_time 0 >/dev/null 2>&1 || true
+}
+
+interval_ok=300
+interval_down=45
+
+while :; do
+  if have_device && ping_device; then
+    assert_toggle
+    sleep "$interval_ok"
+    continue
+  fi
+  adb-wifi >/dev/null 2>&1 || true
+  if have_device; then
+    assert_toggle
+    sleep "$interval_ok"
+  else
+    sleep "$interval_down"
+  fi
+done

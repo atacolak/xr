@@ -42,6 +42,16 @@ These are different.
 | What it creates | durable trust between this `adbkey` and Android | a live TCP/TLS session to `adbd` |
 | Human | required the first time, and if identity is lost | not required if pairing is intact |
 
+Pairing is not immortal. `Disable adb authorization timeout`
+(`adb_allowed_connection_time=0`) is a USB-auth timer. On this Fold
+(One UI 8.5 / Android 16) it does **not** pin Wireless Debugging's
+"paired devices" list. That list can go empty after days of no live
+`adb` session even with the toggle on and Termux `adbkey` intact.
+There is no API to write it back; the pairing-code dialog is the only
+re-entry. Hedge: keep Termux keys, keep `adb_wifi_enabled=1` via
+`sh.colak.fold.wadb`, and keep a live Fold-local `adb` session
+(`fold-thinclient/scripts/adb-keep`). Shizuku does not replace this.
+
 If a process deletes Termux's ADB keys or the phone's pairing records,
 the human gets dragged back into pairing-code UI. That is a bug in the
 development process, not a normal step.
