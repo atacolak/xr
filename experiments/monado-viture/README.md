@@ -179,8 +179,8 @@ tools/headtrack-demo.py --src synth --world room          # no device needed
 
 | | what | caveat |
 |---|---|---|
-| `poll` (default) | `get_gl_pose_carina` | **correct frame** — this is the one to use. Drifts (visual-inertial odometry is relative; see `docs/pose-pipeline.md`) |
-| `cb` | the device's pose callback | measured better in every other way — 600/600 valid, no placeholders, rock steady, gravity-anchored at y ~ 1.0 m — but its quaternion is in the IMU's own frame, so orientation comes out permuted and the view "moves in weird places". **Fixing this basis is the highest-value remaining work for world-lock** |
+| `poll` (default) | `get_gl_pose_carina` | **the stream to use**: the SDK's fully fused pose — gravity-anchored pitch/roll, metric position, a `status` field and a prediction horizon. Measured 2026-10-15: it matches the device's real resting tilt and its position converges. Position wanders when the VIO has nothing to look at (dark, featureless room) — that is odometry behaving as odometry, not a defect |
+| `cb` | the device's pose callback | measured 2026-10-15 at **~18 Hz** (the ~750 Hz figure belongs to the IMU callback, which is the useful one for prediction), no status field, and its payload basis differs from the GL pose, so the two are not directly comparable. Useful as a second opinion on position, not as the source |
 | `synth` | a known sinusoid, no device at all | verifies the render/present chain with the glasses unplugged; its reported pose age is meaningless by construction |
 
 Every sample passes a validity gate before it is shown: the SDK emits zeroed placeholder poses

@@ -72,7 +72,18 @@ now_s(void)
 static const char *
 status_name(int status)
 {
-	return status == 0 ? "stable" : "unstable";
+	/*
+	 * Not a validity gate, and the old "stable"/"unstable" wording caused a long
+	 * misdiagnosis (xr-bi6.12 read as "identity pose, camera bring-up failing" for days).
+	 * Measured 2026-10-15 with the glasses still:
+	 *   6DoF: 358/358 samples status=1, and the pose was good -- orientation tracked the
+	 *         device's real tilt (-28.7 deg pitch) and position converged, and live
+	 *         translation works when worn.
+	 *   3DoF: 238/358 status=0; the status=1 remainder is the first second of convergence.
+	 * So status reads as a convergence/quality flag that ongoing 6DoF holds at 1. Never
+	 * reject a sample on it -- that is what emptied the pose stream in the first place.
+	 */
+	return status == 0 ? "settled" : "converging";
 }
 
 static void
@@ -96,7 +107,10 @@ usage(const char *argv0)
 	        "                   renderer looks down +z; without it a head turn drives the\n"
 	        "                   scene the wrong way.\n"
 	        "  --src-cb         take poses from the device callback instead of polling\n"
-	        "                   (the callback is ~800 Hz and gravity-stable; polling drifts)\n"
+	        "                   Measured 2026-10-15: the pose callback runs at ~18 Hz (the ~750 Hz\n"
+	        "                   figure in circulation is the IMU callback), it carries no status\n"
+	        "                   field, and its payload basis differs from the GL pose, so it is not\n"
+	        "                   directly comparable to the polled stream\n"
 	        "  --cache DIR      cache directory for initialize() (as the app does)\n"
 	        "  --native-probe   also query native (Gen2) mode state; BLOCKS on Carina\n"
 	        "  --reset          reset the VIO origin before sampling\n"
